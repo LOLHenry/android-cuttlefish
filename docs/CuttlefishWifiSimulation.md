@@ -502,4 +502,56 @@ adb shell dumpsys connectivity | grep -i wifi
 
 ---
 
+## 附录 B：常用启动参数说明
+
+以下参数常见于 `launch_cvd` / `assemble_cvd` / `cvd start` 链路。类型中 **vec** 表示可按实例逗号分隔（如 `--enable_modem_simulator=true,false`）。
+
+> **命名说明：** 文档/旧配置中的 `use_allocd` 对应当前源码参数 **`use_cvdalloc`**（通过 `cvdalloc` 分配 TAP/端口等静态资源）。
+
+| 参数 | 类型 | 默认值（约） | 含义 | 功能原理 |
+|------|------|--------------|------|----------|
+| **gpu_mode** | string (vec) | `auto` | 选择 Guest 图形/GPU 栈 | `assemble_cvd` 调用 `ConfigureGpuSettings()`：根据 Host 能力（EGL/Vulkan/gfxstream 探测）、VMM（crosvm/qemu）和 guest 配置，将 `auto` 解析为具体模式（如 `gfxstream_guest_angle`、`guest_swiftshader`、`drm_virgl`、`none` 等）。写入实例配置后，由 crosvm 的 virtio-gpu / gfxstream / angle 参数和 guest `bootconfig` 属性共同生效，决定 SurfaceFlinger、HWC、Vulkan 走哪条渲染路径。 |
+| **extra_kernel_cmdline** | string (vec) | 空 | 追加到 Linux 内核命令行 | 在组装启动镜像时，把额外字符串拼进 guest kernel cmdline（与 `bootconfig` 不同，直接进内核）。用于调试或覆盖内核行为（如 `loglevel=8`、特定驱动参数）。多实例时通常共用 index 0 的值。 |
+| **start_webrtc** | bool (vec) | `false` | 是否启动 WebRTC 相关服务 | **已标记 Deprecated**：帮助文本写明 “webrtc is enabled depending on the VMM”。历史上用于显式拉起浏览器远程桌面；现由 VMM/图形栈配置间接决定是否启用 WebRTC 前端（`webRTC` 进程 + HTML 客户端资源）。一般无需手动设置。 |
+| **enable_modem_simulator** | bool (vec) | `true` | 是否启用蜂窝基带模拟 | 为 `true` 时 `run_cvd` 启动 `modem_simulator` 进程，通过 vsock/socket 响应 Guest RILD 的 AT 命令，并配合 `cvd-mtap-XX` TAP 提供移动数据路径。`false` 时无蜂窝仿真（`minimal_mode` 也会强制关闭）。 |
+| **start_gnss_proxy** | bool (vec) | `true` | 是否启动 GNSS 代理 | 为 `true` 时启动 `gnss_grpc_proxy`：在 Host 与 Guest 的 GNSS/Location HVC 之间用 FIFO + gRPC 桥接，可注入固定位置或回放测量文件（`gnss_file_path` / `fixed_location_file_path`）。Guest 的 `LocationManager` 因此能获得模拟定位。 |
+| **enable_host_bluetooth** | bool (vec) | `true` | 是否启用 Host 侧经典蓝牙仿真 | 为 `true` 且未把蓝牙交给 netsim 时，启动 **rootcanal**（Host 蓝牙控制器仿真），并通过 HCI 与 Guest 蓝牙栈通信。与 `netsim_bt` 互斥：netsim 接管时走 `enable_host_bluetooth_connector=false`。 |
+| **report_anonymous_usage_stats** | string | 动态默认 | 是否上报匿名使用统计 | 控制 `metrics` / `metrics_launcher` 是否向 Google 发送匿名遥测（启动参数、环境信息等，见 `metrics` 模块）。用于产品改进，不涉及个人数据；可设为 `n` 关闭。 |
+| **enable_host_uwb** | bool | `true` | 是否启用 Host UWB 仿真 | 为 `true` 且 UWB 未交给 netsim 时，启动 Host **UWB connector**（配合 `pica` 等），在 Guest UWB HAL 与 Host 仿真器之间转发。UWB 测距/雷达类测试依赖此路径。 |
+| **netsim** | bool (vec) | `false` | [实验] 所有射频走 netsim | 为 `true` 时，BT/UWB/NFC 等无线电尽量统一由 **netsimd** 仿真（`--netsim_args` 可细调）。`run_cvd` 为各 radio HAL 创建 FIFO，启动 `netsimd` 并注册设备 JSON。与 rootcanal/casimir/pica 等 legacy 路径互斥或降级。 |
+| **netsim_bt** | bool (vec) | `true` | 蓝牙走 netsim | 仅将 **蓝牙** 射频接到 netsim（不必开启 `netsim` 全量）。默认 `true` 意味着新配置倾向 netsim 蓝牙而非纯 rootcanal，除非显式 `enable_host_bluetooth` 且 netsim 未接管。 |
+| **proxy_fastboot** | bool | `true` | 是否建立 fastboot TCP 代理 | 在 Android 正常启动流中，`run_cvd` 启动 `socket_vsock_proxy`：监听 Host 侧 `fastboot_host_port`，在检测到内核日志 `FastbootStarted` 后，将 TCP 流量转发到 Guest 以太网 `5554`（fastbootd），直到 `AdbdStarted`。使 Host 上 `fastboot -s tcp:...` 可连接虚拟机。 |
+| **resume** | bool | `true` | 是否沿用上次会话磁盘状态 | 为 `true` 时尝试复用上次运行产生的 userdata/overlay 等可变分区，保留应用数据；`--noresume` 则重置到首次启动镜像状态。若底层 super 镜像已更新则忽略。从 snapshot 恢复时等价于始终 resume。 |
+| **use_cvdalloc**（旧名 use_allocd） | string/bool (vec) | `unset`（常由 defaults 决定） | 是否用 cvdalloc 分配静态资源 | 为 `true` 时 `run_cvd` 调用 **cvdalloc** 向资源守护进程申请实例专属的 TAP、WiFi/以太网地址、端口等，避免与 `cuttlefish-host-resources` 预创建接口冲突，适合容器/多租户。为 `false` 时使用传统 `cvd-wifiap-XX` / `cvd-etap-XX` 预分配接口。 |
+| **vm_manager** | string | 空（按 guest 自动选） | 虚拟机管理器 | 指定 `crosvm` 或 `qemu_cli`。决定由哪套 VMM 启动 guest：crosvm 为 Cuttlefish 主路径（virtio 设备模型、沙箱、snapshot）；QEMU 用于部分架构或兼容场景。写入配置后影响 `run_cvd` 构造的整条启动命令。 |
+| **cpus** | string (vec) | `4` | 虚拟 CPU 个数 | 传入 crosvm/QEMU 的 `-smp` 或等价参数，并写入 `CuttlefishConfig`。影响 Guest 调度能力与部分 CTS 对核心数的假设。 |
+| **base_instance_num** | int | 未设时由环境推导 | 多实例起始编号 | 与 `--num_instances=N` 配合：实例号为 `base_instance_num`, `base_instance_num+1`, …。影响 **实例 ID、ADB 端口、TAP 名后缀、vsock CID** 等（如 base=3 则可能是 `cvd-3`、`cvd-wifiap-03`）。与 `--instance_nums` 互斥。 |
+
+### 参数组合提示
+
+| 目标 | 建议 |
+|------|------|
+| 无 GPU /  headless CI | `--gpu_mode=none` 或 `guest_swiftshader` |
+| 无蜂窝，加快启动 | `--enable_modem_simulator=false` |
+| 无蓝牙 | `--enable_host_bluetooth=false` 且 `--netsim_bt=false` |
+| 容器内多实例 | `--use_cvdalloc=true` |
+| 干净刷机状态 | `--noresume` |
+| 仅调试内核 | `--extra_kernel_cmdline="loglevel=8"` |
+
+### 相关源码
+
+| 参数 | 主要定义位置 |
+|------|----------------|
+| gpu_mode | `assemble_cvd/flags/gpu_mode.cc`, `assemble_cvd/graphics_flags.cc` |
+| extra_kernel_cmdline | `assemble_cvd/flags/extra_kernel_cmdline.cc` |
+| enable_modem_simulator / start_gnss_proxy / netsim* | `assemble_cvd/assemble_cvd_flags.cpp` |
+| proxy_fastboot | `host/libs/config/fastboot/flags.cpp`, `fastboot/launch.cpp` |
+| resume | `assemble_cvd/assemble_cvd_flags.cpp` |
+| use_cvdalloc | `assemble_cvd/flags/use_cvdalloc.cc`, `run_cvd/launch/cvdalloc.cpp` |
+| vm_manager | `assemble_cvd/flags/vm_manager.cc` |
+| cpus | `assemble_cvd/flags/cpus.cc` |
+| base_instance_num | `host/libs/config/instance_nums.cpp` |
+
+---
+
 *文档版本：与 android-cuttlefish 1.57.x 源码同步。若升级 host package，请以对应 tag 的源码为准核对路径与默认行为。*
