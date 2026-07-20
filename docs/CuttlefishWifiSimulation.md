@@ -512,7 +512,7 @@ adb shell dumpsys connectivity | grep -i wifi
 |------|------|--------------|------|----------|
 | **gpu_mode** | string (vec) | `auto` | 选择 Guest 图形/GPU 栈 | `assemble_cvd` 调用 `ConfigureGpuSettings()`：根据 Host 能力（EGL/Vulkan/gfxstream 探测）、VMM（crosvm/qemu）和 guest 配置，将 `auto` 解析为具体模式（如 `gfxstream_guest_angle`、`guest_swiftshader`、`drm_virgl`、`none` 等）。写入实例配置后，由 crosvm 的 virtio-gpu / gfxstream / angle 参数和 guest `bootconfig` 属性共同生效，决定 SurfaceFlinger、HWC、Vulkan 走哪条渲染路径。 |
 | **extra_kernel_cmdline** | string (vec) | 空 | 追加到 Linux 内核命令行 | 在组装启动镜像时，把额外字符串拼进 guest kernel cmdline（与 `bootconfig` 不同，直接进内核）。用于调试或覆盖内核行为（如 `loglevel=8`、特定驱动参数）。多实例时通常共用 index 0 的值。 |
-| **start_webrtc** | bool (vec) | `false` | 是否启动 WebRTC 相关服务 | **已标记 Deprecated**：帮助文本写明 “webrtc is enabled depending on the VMM”。历史上用于显式拉起浏览器远程桌面；现由 VMM/图形栈配置间接决定是否启用 WebRTC 前端（`webRTC` 进程 + HTML 客户端资源）。一般无需手动设置。 |
+| **start_webrtc** | bool (vec) | `false`（新 host）；A14 时代常为 `true` | 是否启动 WebRTC 远程桌面 | **与 host 版本强相关。** **Android 14 及同期 host（约 cuttlefish-common 早于 1.19）**：`--start_webrtc=true` 会显式拉起 `webRTC` 进程和信令代理，浏览器访问 `https://localhost:<sig_port>` 可操作屏幕/输入；`--record_screen=true` 也依赖此 flag。**较新 host（1.19 及以后，changelog PR #1493）**：已 **移除该 flag 的控制逻辑**，帮助文本标为 Deprecated；WebRTC 是否启动改由 `run_cvd/launch/streamer.cpp` 自动判断：`gpu_mode != none` 且 VMM 为 crosvm/qemu 时默认拉起，不再读 `start_webrtc`。若你仍在 A14 栈上，应继续按旧文档使用 `--start_webrtc=true`。 |
 | **enable_modem_simulator** | bool (vec) | `true` | 是否启用蜂窝基带模拟 | 为 `true` 时 `run_cvd` 启动 `modem_simulator` 进程，通过 vsock/socket 响应 Guest RILD 的 AT 命令，并配合 `cvd-mtap-XX` TAP 提供移动数据路径。`false` 时无蜂窝仿真（`minimal_mode` 也会强制关闭）。 |
 | **start_gnss_proxy** | bool (vec) | `true` | 是否启动 GNSS 代理 | 为 `true` 时启动 `gnss_grpc_proxy`：在 Host 与 Guest 的 GNSS/Location HVC 之间用 FIFO + gRPC 桥接，可注入固定位置或回放测量文件（`gnss_file_path` / `fixed_location_file_path`）。Guest 的 `LocationManager` 因此能获得模拟定位。 |
 | **enable_host_bluetooth** | bool (vec) | `true` | 是否启用 Host 侧经典蓝牙仿真 | 为 `true` 且未把蓝牙交给 netsim 时，启动 **rootcanal**（Host 蓝牙控制器仿真），并通过 HCI 与 Guest 蓝牙栈通信。与 `netsim_bt` 互斥：netsim 接管时走 `enable_host_bluetooth_connector=false`。 |
@@ -526,6 +526,17 @@ adb shell dumpsys connectivity | grep -i wifi
 | **vm_manager** | string | 空（按 guest 自动选） | 虚拟机管理器 | 指定 `crosvm` 或 `qemu_cli`。决定由哪套 VMM 启动 guest：crosvm 为 Cuttlefish 主路径（virtio 设备模型、沙箱、snapshot）；QEMU 用于部分架构或兼容场景。写入配置后影响 `run_cvd` 构造的整条启动命令。 |
 | **cpus** | string (vec) | `4` | 虚拟 CPU 个数 | 传入 crosvm/QEMU 的 `-smp` 或等价参数，并写入 `CuttlefishConfig`。影响 Guest 调度能力与部分 CTS 对核心数的假设。 |
 | **base_instance_num** | int | 未设时由环境推导 | 多实例起始编号 | 与 `--num_instances=N` 配合：实例号为 `base_instance_num`, `base_instance_num+1`, …。影响 **实例 ID、ADB 端口、TAP 名后缀、vsock CID** 等（如 base=3 则可能是 `cvd-3`、`cvd-wifiap-03`）。与 `--instance_nums` 互斥。 |
+
+### `start_webrtc` 版本差异（Android 14 vs 新 host）
+
+| 维度 | Android 14 同期 host | 新 host（本仓库 1.57.x） |
+|------|----------------------|---------------------------|
+| flag 是否生效 | **是**，需 `--start_webrtc=true` 才起 WebRTC | **否**，flag 保留但行为已删除 |
+| 默认是否开 WebRTC | 默认 `false`，需手动打开 | 满足 GPU/VMM 条件时**自动**启动 |
+| 典型启动示例 | `launch_cvd --start_webrtc=true ...` | 一般不必传；确保 `--gpu_mode` 不是 `none` |
+| 浏览器访问 | 启动日志提示 `https://localhost:<port>` | 同上，由 `WebRtcServer::Diagnostics()` 打印 |
+
+Android 14 用户：**不要**因为新文档写 “Deprecated” 就删掉 `--start_webrtc=true`，在你那一代 host 里它仍然是正确开关。
 
 ### 参数组合提示
 
