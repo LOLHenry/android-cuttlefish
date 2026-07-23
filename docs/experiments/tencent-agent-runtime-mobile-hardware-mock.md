@@ -2,7 +2,16 @@
 
 > 试验日期：2026-07-23  
 > 地域：`ap-shanghai`（数据面域名 `ap-shanghai.tencentags.com`）  
-> 目的：核实 Mobile / android-world 沙箱底层实现，以及是否官方提供 WiFi / Camera / GNSS / BT 等硬件 mock 能力。
+> 目的：核实 Mobile / android-world 沙箱底层实现，以及是否官方提供 WiFi / Camera / GNSS / BT 等硬件 mock 能力。  
+> 硬件/mock 专项命令复测：2026-07-23 10:22 UTC，Instance `ocfkyyvhr4sv23ydpzefw4yl4vr5atl7j2rmrfiq`（Tool `android-world-probe` / `sdt-pd9yjy00`），原始输出 `/tmp/ags-probe/hw_cmd_matrix/`。
+
+**实测标注图例**
+
+| 标记 | 含义 |
+|---|---|
+| ✅ 可用 | 命令可执行，输出可用于诊断/观察 |
+| ⚠️ 部分可用 | 命令能跑，但 mock/控制效果不完整或未生效 |
+| ❌ 不可用 | 命令失败，或作为硬件 mock 无实际效果 |
 
 ---
 
@@ -30,7 +39,7 @@
 示例 InstanceId：
 
 - mobile：`tsrfnfjyucrqqadhjgx333ghavnshqt44zeil7nb`
-- android-world：`sir6pqwgviu2ezosndhbbl22ax67yrgk6gq6lmtg`、`kfnycb3jrbykfjpodh4jl6hkogaasvynqcbu4r7r` 等
+- android-world：`sir6pqwgviu2ezosndhbbl22ax67yrgk6gq6lmtg`、`kfnycb3jrbykfjpodh4jl6hkogaasvynqcbu4r7r`、硬件复测 `ocfkyyvhr4sv23ydpzefw4yl4vr5atl7j2rmrfiq` 等
 
 ---
 
@@ -104,35 +113,67 @@ agr instance mobile adb "$INSTANCE_ID" -- shell 'pm list features | head -80'
 agr instance mobile adb "$INSTANCE_ID" -- shell 'ss -lntp'   # 或 netstat 等价查看监听端口
 ```
 
-### 2.5 硬件 / mock 专项命令
+### 2.5 硬件 / mock 专项命令（含实测标注）
+
+> 下列命令均通过 `agr instance mobile adb "$IID" -- shell ...` 在 android-world 实例上复测。  
+> 「可用」仅表示 ADB 探查命令能跑；**不等于**官方提供硬件 mock API。
+
+#### WiFi
 
 ```bash
-# WiFi
-agr instance mobile adb "$IID" -- shell dumpsys wifi
+# ✅ 可用（诊断）：WiFi 默认 Disabled；SupportedFeatures 有值
+agr instance mobile adb "$IID" -- shell 'dumpsys wifi | head -60'
+# ✅ 可用（诊断）：可见 ro.boot.smartrun.wifi.enabled=0、wifi.interface=wlan0
 agr instance mobile adb "$IID" -- shell 'getprop | grep -iE "wifi|wlan|rssi|bssid"'
+# ✅ 可用（诊断）：存在 eth0(UP)、hwsim0(DOWN)；无 wlan0 网卡设备
 agr instance mobile adb "$IID" -- shell 'ip link; ls /sys/class/net'
+# ❌ 不可用（启用不成功）：svc/cmd 触发后随即 CMD_STA_START_FAILURE，仍 Disabled；wlan0 不存在
+agr instance mobile adb "$IID" -- shell 'svc wifi enable; cmd wifi set-wifi-enabled enabled; sleep 3; cmd wifi status'
+# ❌ 不可用（无扫描结果）：因 WiFi 无法真正启用
+agr instance mobile adb "$IID" -- shell 'cmd wifi start-scan; sleep 2; cmd wifi list-scan-results'
+# ❌ 不可用（SoftAP）：start-softap 后仍 SAP disabled / failure
+agr instance mobile adb "$IID" -- shell 'cmd wifi start-softap TestAP open'
+# ✅ 可用（帮助文本）：cmd wifi help 可列出子命令，但无 RSSI/AP 注入类官方接口
+agr instance mobile adb "$IID" -- shell 'cmd wifi help'
+```
 
-# GNSS / Location
-agr instance mobile adb "$IID" -- shell dumpsys location
+#### GNSS / Location
+
+```bash
+# ✅ 可用（诊断）：providers 存在；gps last location=null，mStarted=false
+agr instance mobile adb "$IID" -- shell 'dumpsys location | head -100'
+# ✅ 可用（诊断）：可读 init.redroid.gps.sh（默认深圳市民中心坐标）
 agr instance mobile adb "$IID" -- shell cat /vendor/bin/init.redroid.gps.sh
+# ✅ 可用（诊断）：默认文件可读 LatitudeDegrees=22.5435929 ...
 agr instance mobile adb "$IID" -- shell 'ls -la /data/vendor/gps; cat /data/vendor/gps/gnss'
-agr instance mobile adb "$IID" -- shell cmd location help
+# ✅ 可用（帮助）：help 文本可打印（adb exit 常为 255，属 cmd help 常见行为）
+agr instance mobile adb "$IID" -- shell 'cmd location help'
+# ⚠️ 部分可用（文件可写，定位未验证生效）：写入北京坐标成功并持久；dumpsys 仍 last location=null
 agr instance mobile adb "$IID" -- shell 'printf "LatitudeDegrees=39.9042\nLongitudeDegrees=116.4074\nAltitudeMeters=50\nBearingDegrees=10\nSpeedMetersPerSec=1\n" > /data/vendor/gps/gnss'
-agr instance mobile adb "$IID" -- shell 'cmd location providers add-test-provider mockgps --requiresSatellite'
-# （试验中因 MOCK_LOCATION appops 失败）
+# ✅ 可用（开关）：set-location-enabled true → is-location-enabled=true
+agr instance mobile adb "$IID" -- shell 'cmd location set-location-enabled true; cmd location is-location-enabled'
+# ❌ 不可用（Android test provider）：SecurityException MOCK_LOCATION（uid 0 / shell 均失败）
+agr instance mobile adb "$IID" -- shell 'cmd location providers add-test-provider mockgps --requiresSatellite --supportsAltitude --supportsSpeed --supportsBearing'
+agr instance mobile adb "$IID" -- shell 'cmd location providers set-test-provider-location mockgps --location 31.23,121.47 --accuracy 5'
+```
 
-# BT
-agr instance mobile adb "$IID" -- shell dumpsys bluetooth_manager
+#### BT / Camera / Sensor / Battery
+
+```bash
+# ✅ 可用（诊断）：adapter enabled=false / state=OFF；sim HAL 在跑
+agr instance mobile adb "$IID" -- shell 'dumpsys bluetooth_manager | head -40'
 agr instance mobile adb "$IID" -- shell 'getprop | grep -i bluetooth'
-
-# Camera / Sensor
-agr instance mobile adb "$IID" -- shell dumpsys media.camera
-agr instance mobile adb "$IID" -- shell dumpsys sensorservice
+# ⚠️ 部分可用（enable 返回 Success，但状态仍 OFF / Service not connected）
+agr instance mobile adb "$IID" -- shell 'svc bluetooth enable; sleep 2; dumpsys bluetooth_manager | head -30'
+# ✅ 可用（诊断）：1 个 Front/External camera，/dev/video42 存在；无注入子命令
+agr instance mobile adb "$IID" -- shell 'dumpsys media.camera | head -80'
 agr instance mobile adb "$IID" -- shell 'ls -la /dev/video*'
-
-# Battery（对照：镜像内文件 mock）
-agr instance mobile adb "$IID" -- shell head -80 /vendor/bin/init.redroid.battery.sh
-agr instance mobile adb "$IID" -- shell 'cat /sys/class/power_supply/battery/capacity'
+# ❌ 不可用（传感器）：No Sensors on the device；devInitCheck=-19
+agr instance mobile adb "$IID" -- shell dumpsys sensorservice
+# ⚠️ 部分可用（电池 stub 文件可写，sysfs 未挂上）：/data/vendor/battery/.../capacity 98→55；
+#    /sys/class/power_supply 无效；dumpsys battery level=0 present=false
+agr instance mobile adb "$IID" -- shell 'head -40 /vendor/bin/init.redroid.battery.sh'
+agr instance mobile adb "$IID" -- shell 'echo 55 > /data/vendor/battery/power_supply/battery/capacity; cat /data/vendor/battery/power_supply/battery/capacity; cat /sys/class/power_supply/battery/capacity'
 ```
 
 ### 2.6 官方能力核对命令 / 文档
@@ -196,18 +237,17 @@ agr instance mobile --help
 
 **文档 / CLI**：未发现 WiFi RSSI/AP、Camera 注入、GNSS 注入、BT mock、传感器注入的产品 API。官方能力止于 UI 自动化链路。
 
-**镜像内 stub（非官方 API）实测**：
+**镜像内 stub（非官方 API）——2026-07-23 复测结论**：
 
-| 能力 | 官方 API | 镜像现象 | 注入/可控性 |
+| 能力 | 官方 API | 镜像现象 | 实测标注 |
 |---|---|---|---|
-| WiFi / AP / 信号强度 | 无 | WiFi 默认关闭：`ro.boot.smartrun.wifi.enabled=0`；`dumpsys wifi` 为 Disabled；存在 `hwsim0`（mac80211_hwsim）与 `wlan0` 相关 prop | **无**文档化注入接口；未验证可控 AP/RSSI mock |
-| Camera | 无 | 1 个 Front/External HAL（`device@1.1/external/142`），`/dev/video42` | **无**官方图片/视频注入 API |
-| GNSS | 无 | GNSS HAL 存在；`init.redroid.gps.sh` 写默认坐标到 `/data/vendor/gps/gnss`（默认深圳市民中心） | 文件可写（试验改写为北京坐标成功）；**未文档化**；`dumpsys location` 在未 start GPS 请求时 `last location=null` |
-| Android test provider | — | `cmd location providers ...` 存在 | shell/root 调 `add-test-provider` 报 `SecurityException: MOCK_LOCATION` |
-| BT | 无 | `android.hardware.bluetooth@1.1-service.sim` running；adapter 默认 OFF | **无**官方 mock 控制 |
-| 运动传感器 | 无 | feature 声明 accelerometer/compass，但 `dumpsys sensorservice` → **No Sensors on the device** | 实质上不可用 |
-| 电池 | 无 | `init.redroid.battery.sh` 把 `/data/vendor/battery` bind 到 `/sys/class/power_supply` | 文件级 stub，非产品 API |
-| Radio | 无 | `smartrun-radio-stub` running | 基带 stub，非完整 modem mock API |
+| WiFi / AP / 信号强度 | 无 | `smartrun.wifi.enabled=0`；`hwsim0` DOWN；`wlan0` 设备不存在 | ❌ 启用失败（STA_START_FAILURE）；扫描/SoftAP 无效；无 RSSI/AP 注入 |
+| Camera | 无 | 1× Front/External + `/dev/video42` | ✅ dumpsys 可读；❌ 无注入命令 |
+| GNSS | 无 | GNSS HAL + `/data/vendor/gps/gnss` | ⚠️ 文件可写；❌ `last location` 仍 null；❌ test provider 被 MOCK_LOCATION 拒绝 |
+| BT | 无 | `bluetooth@1.1-service.sim` | ⚠️ `svc bluetooth enable` 回报 Success 但状态仍 OFF |
+| 运动传感器 | 无 | feature 声明有，service 无设备 | ❌ `No Sensors on the device` |
+| 电池 | 无 | `/data/vendor/battery` 文件 stub | ⚠️ 文件可改；❌ sysfs 未挂载，`dumpsys battery` level=0 |
+| Radio | 无 | `smartrun-radio-stub` | 仅 stub 存在，无产品级 mock API |
 
 ### 3.4 阶段 D：与云手机 CPH 的边界
 
@@ -220,6 +260,65 @@ agr instance mobile --help
 
 这些**不能**当作 Agent Runtime Mobile 沙箱的官方能力。
 
+### 3.5 硬件 / mock 专项命令实测矩阵（2026-07-23）
+
+复测环境：
+
+- Tool：`android-world-probe`（`sdt-pd9yjy00`）
+- Instance：`ocfkyyvhr4sv23ydpzefw4yl4vr5atl7j2rmrfiq`
+- ADB：`agr instance mobile connect` → `127.0.0.1:39967`
+- 原始输出目录：`/tmp/ags-probe/hw_cmd_matrix/`（`D01`–`D13`、`M01`–`M18`）
+
+#### 诊断类命令
+
+| ID | 命令意图 | Exit | 实测标注 | 关键结果摘要 |
+|---|---|---|---|---|
+| D01 | `dumpsys wifi \| head` | 0 | ✅ 可用 | `WifiState 0`，`Current wifi mode: DisabledState`，`Wi-Fi is disabled` |
+| D02 | wifi 相关 getprop | 0 | ✅ 可用 | `ro.boot.smartrun.wifi.enabled=0`；`wifi.interface=wlan0`；HAL/wificond running |
+| D03 | `ip link` / net | 0 | ✅ 可用 | `eth0` UP；`hwsim0` DOWN；**无** `wlan0` 设备 |
+| D04 | `dumpsys location` | 0 | ✅ 可用 | gps/network/fused 存在；各 `last location=null`；gps `mStarted=false` |
+| D05 | `cat init.redroid.gps.sh` | 0 | ✅ 可用 | 默认写入深圳市民中心坐标到 `/data/vendor/gps/gnss` |
+| D06 | 读 gnss 文件 | 0 | ✅ 可用 | 默认 `22.5435929, 114.0572401` |
+| D07 | `cmd location help` | 255* | ✅ 可用 | help 文本完整打印（*Android `cmd help` 常见非 0） |
+| D08 | `dumpsys bluetooth_manager` | 0 | ✅ 可用 | `enabled: false`，`state: OFF`，`Bluetooth Service not connected` |
+| D09 | bluetooth getprop | 0 | ✅ 可用 | `vendor.bluetooth-1-1` running |
+| D10 | `dumpsys media.camera` | 0 | ✅ 可用 | 1 camera，Facing Front，HardwareLevel EXTERNAL，device `142` |
+| D11 | `ls /dev/video*` | 0 | ✅ 可用 | `/dev/video42` 存在 |
+| D12 | `dumpsys sensorservice` | 0 | ❌ 不可用 | `No Sensors on the device`；`devInitCheck : -19` |
+| D13 | battery script / sysfs | 0 | ⚠️ 部分可用 | script 存在；`/sys/class/power_supply/battery/capacity` **No such file** |
+
+#### 注入 / 控制尝试
+
+| ID | 命令意图 | Exit | 实测标注 | 关键结果摘要 |
+|---|---|---|---|---|
+| M01 | 写 gnss 为北京坐标 | 0 | ⚠️ 部分可用 | 文件变为 `39.9042,116.4074`；属未文档化内部文件 |
+| M02 | `set-location-enabled true` | 0 | ✅ 可用 | `is-location-enabled` → `true` |
+| M03 | `add-test-provider mockgps` | 255 | ❌ 不可用 | `SecurityException: ... not allowed to perform MOCK_LOCATION` |
+| M04 | `set-test-provider-location` | 255 | ❌ 不可用 | 同上 MOCK_LOCATION |
+| M05 | appops allow 后重试 | 255 | ❌ 不可用 | 仍 MOCK_LOCATION（uid 0 / shell） |
+| M06 | GPS extra + 再 dumpsys | 0 | ❌ 不可用（作 mock） | `last location` 仍全部 `null`；`mStarted=false` |
+| M07 | `svc wifi enable` | 1† | ❌ 不可用 | 短暂切 Enabled 后 `CMD_STA_START_FAILURE` / `WifiNative Failure`；`wlan0` does not exist；`hwsim0` DOWN |
+| M08 | `cmd wifi help` | 0 | ✅ 可用（仅帮助） | 有 status/scan/softap/suggestion；**无** RSSI/AP 注入 API |
+| M09 | `svc bluetooth enable` | 0 | ⚠️ 部分可用 | 打印 `enable: Success`，但 2s 后仍 `enabled: false` / Service not connected |
+| M10 | 写 battery capacity 文件 | 0 | ⚠️ 部分可用 | `/data/vendor/battery/.../capacity`：`98 → 55`；sysfs 路径不存在 |
+| M11 | 查找 camera/mock 相关 cmd | 0 | ✅ 可用（探查） | 有 `wifi`/`location`/`media.camera`/`sensorservice`；vendor 仅 `init.redroid.gps.sh`，无 inject/mock 工具 |
+| M12 | 完整 sensorservice | 0 | ❌ 不可用 | 同 D12：无传感器 |
+| M13 | 写坐标后复查 location | 0 | ❌ 不可用（作 mock） | gnss 文件已是北京坐标，但 gps `last location=null`，`ProviderRequest[OFF]` |
+| M14 | GNSS HAL 进程 | 0 | ✅ 可用（诊断） | `android.hardware.gnss-service` 在跑；`ro.kernel.qemu.gps=1` |
+| M15 | `cmd wifi` status/scan | 0 | ❌ 不可用 | `Wifi is disabled`；`No scan results`；`smartrun.wifi.enabled=0` |
+| M16 | 打开定位设置后再查 | 0 | ❌ 不可用（作 mock） | `location_mode=3`；各 provider `last location=null` |
+| M17 | `cmd wifi start-softap` | 0 | ❌ 不可用 | `SAP is disabled`；`onStateChanged ... failure` |
+| M18 | battery sysfs/mount | 0 | ⚠️ 部分可用 | data 文件在；`/sys/class/power_supply: Invalid argument`；`dumpsys battery` `present: false` `level: 0` |
+
+† M07 的非 0 主要来自管道/`ip link show wlan0` 失败；关键失败点是 WiFi STA 启动失败。
+
+#### 总评
+
+| 目标 | 结论 |
+|---|---|
+| 把专项命令当 **ADB 诊断工具** | 大部分 ✅ 可用 |
+| 把专项命令当 **可控硬件 mock**（WiFi AP/RSSI、GNSS 生效定位、Camera 注入、BT、传感器） | ❌ 不可用 / 仅 ⚠️ 残缺 stub |
+| 是否存在官方硬件 mock 产品能力 | **否** |
 ---
 
 ## 4. 实验发现（摘要）
@@ -227,7 +326,7 @@ agr instance mobile --help
 1. **官方未提供硬件 mock 产品能力**（WiFi 信号/AP、Camera、GNSS、BT、传感器等）。控制面只有 Appium / ADB / scrcpy。  
 2. **底层不是 Emulator，也不是 Cuttlefish**；是 Cube Hypervisor + SmartRun/Redroid Android 14。  
 3. **android-world 不是另一套虚拟化**，而是同底座加 AW 应用与适配（v23）。  
-4. **镜像内部存在部分 stub**（GPS 文件、电池 sysfs、BT sim HAL、external camera、radio stub、hwsim0），属于实现细节，无 SLA/文档，不适合作为业务依赖。  
+4. **专项命令复测**：诊断类 dumpsys/getprop/ip **大多可用**；作为 mock——WiFi 启用/扫描/SoftAP **失败**，GNSS 文件可写但 **location 不更新**，`cmd location` test provider **被拒绝**，BT enable **名成功实失败**，传感器 **无设备**，电池文件可写但 **sysfs 未挂上**。  
 5. **上游 AndroidWorld / AndroidEnv 依赖的 Emulator gRPC(8554) a11y 通路在此环境不存在**；若要复用原 pipeline，需自建适配，而非依赖腾讯官方兼容说明。  
 6. **Android 版本不可在 mobile/android-world 预置类型上配置**；仅 `custom` 可自带镜像（且 custom 面向容器配置，不等同于官方 Android 硬件仿真）。  
 7. **安全提醒**：试验中使用的 API Key / Secret 曾出现在交互上下文，建议在控制台轮换。
@@ -244,7 +343,9 @@ agr instance mobile --help
 | `probe_mobile.py` | E2B SDK 探测脚本 |
 | `adb_probe.txt` / `adb_probe2.txt` / `adb_extra.txt` | mobile 指纹与传感器/相机 |
 | `aw_probe.txt` / `aw_adapt_detail.txt` / `aw_grpc_check.txt` | android-world 指纹、适配层、端口 |
-| `hw_mock_probe.txt` / `hw_mock_probe2.txt` / `hw_mock_probe3.txt` | 硬件 mock 专项 dumpsys / GPS 文件注入 / 网卡 |
+| `hw_mock_probe.txt` / `hw_mock_probe2.txt` / `hw_mock_probe3.txt` | 早期硬件 mock 专项 dumpsys / GPS 文件注入 / 网卡 |
+| `hw_cmd_matrix/`（`D01`–`D13`、`M01`–`M18`） | **2026-07-23 复测**逐条命令 JSON/文本结果 |
+| `hw_test_instance_id.txt` | 复测 InstanceId |
 | `*_connect.json` / `*_instance*.json` | connect / instance 元数据 |
 | `scrcpy_*.txt` | 投屏会话相关记录 |
 
@@ -280,4 +381,4 @@ agr instance delete "$INSTANCE_ID" --ignore-not-found
 ## 7. 结论
 
 **腾讯云 Agent Runtime 的 Mobile / Android World 沙箱：官方不提供可调用的硬件 mock 能力。**  
-实机仅能看到 Redroid/SmartRun 层的部分 HAL/stub；若业务需要可控的 WiFi/GNSS/Camera/BT/传感器仿真，应评估其他方案（例如完整 Android Emulator、云手机 CPH，或自建自定义环境），而不是依赖 Agent Runtime 官方文档中不存在的接口。
+实机复测表明：报告中的硬件/mock 专项命令作为 **诊断（dumpsys/getprop）大多可用**；作为 **可控 mock（WiFi/GNSS/Camera/BT/传感器）基本不可用**，仅残留未文档化、不可靠的文件 stub。若业务需要可控硬件仿真，应评估其他方案（例如完整 Android Emulator、云手机 CPH，或自建自定义环境）。
