@@ -3,7 +3,8 @@
 > 试验日期：2026-07-23  
 > 地域：`ap-shanghai`（数据面域名 `ap-shanghai.tencentags.com`）  
 > 目的：核实 Mobile / android-world 沙箱底层实现，以及是否官方提供 WiFi / Camera / GNSS / BT 等硬件 mock 能力。  
-> 硬件/mock 专项命令复测：2026-07-23 10:22 UTC，Instance `ocfkyyvhr4sv23ydpzefw4yl4vr5atl7j2rmrfiq`（Tool `android-world-probe` / `sdt-pd9yjy00`），原始输出 `/tmp/ags-probe/hw_cmd_matrix/`。
+> 硬件/mock 专项命令复测：2026-07-23 10:22 UTC，Instance `ocfkyyvhr4sv23ydpzefw4yl4vr5atl7j2rmrfiq`（Tool `android-world-probe` / `sdt-pd9yjy00`），原始输出 `/tmp/ags-probe/hw_cmd_matrix/`。  
+> android_world_adapt v23 逆向抽取：2026-07-25，分析见 §3.2.1，抽取物见 `artifacts/android-world-adapt-v23/`。
 
 **实测标注图例**
 
@@ -233,7 +234,251 @@ agr instance mobile --help
 
 **结论**：android-world ≈ mobile 底座 + SmartRun `android_world_adapt`；**没有**官方 AndroidEnv/a11y-gRPC 兼容层文档与端口。
 
+### 3.2.1 `android_world_adapt` v23 逆向抽取（2026-07-25）
+
+> 从 live android-world 沙箱抽取；属性 `ro.smartrun.android_world_adapt.version=v23`。  
+> 抽取物（脚本/rc）见同目录 `artifacts/android-world-adapt-v23/`。
+
+#### 结论
+
+`android_world_adapt` **不是独立开源仓库**，而是 SmartRun 在 Redroid 镜像编译时用 `TARGET_INCLUDE_ANDROID_WORLD_ADAPT=true` 打开的一组镜像侧改动（init / 脚本 / HAL stub / 预装应用 / overlay）。
+
+公开可见的源码路径线索来自二进制字符串：`device/redroid/radio-stub/*.cpp`（厂商树路径，未公开）。
+
+#### 组件清单
+
+| 组件 | 镜像路径 | 作用 |
+|---|---|---|
+| Init 主文件 | `/vendor/etc/init/init.redroid.rc` | v23 段：`boot_completed` 且 adapt=1 时启动 telephony bootstrap；另含 WiFi v20、Pixel 启动注释 |
+| Telephony 脚本 | `/vendor/bin/init.redroid.android-world-telephony.sh` | **v23.2** SMS/MMS DB bootstrap（`mmssms.db`） |
+| Pixel 脚本 | `/vendor/bin/init.redroid.pixel.sh` | Pixel Launcher / Launcher3 + 圆角图标 overlay 切换 |
+| Radio stub rc | `/vendor/etc/init/smartrun-radio-stub.rc` | Radio AIDL stub 服务定义 |
+| VINTF | `/vendor/etc/vintf/manifest/smartrun-radio-stub.manifest.xml` | HAL 声明 |
+| Radio stub ELF | `/vendor/bin/smartrun-radio-stub` | Radio HAL stub 二进制（~101KB，stripped） |
+
+#### 编译开关（来自 `init.redroid.rc` 注释）
+
+- `TARGET_INCLUDE_ANDROID_WORLD_ADAPT=true` → 写入 `ro.smartrun.build.android_world_adapt=1`
+- `ro.smartrun.android_world_adapt.version=v23`
+- 普通 redroid（未设 adapt 属性）不会触发 `android_world_telephony_init`
+
+#### v23 核心行为：Telephony bootstrap
+
+问题：AndroidWorld SMS 任务需要 `com.android.providers.telephony` 的 `mmssms.db`。Redroid + FBE 下库在 `/data/user_de/0/...`，冷启动可能未创建。
+
+脚本逻辑（v23.2）：
+
+1. sentinel：`/data/local/tmp/.android-world-telephony-init.done`
+2. 循环 `content query content://sms|mms/inbox`，触发 provider `onCreate()`
+3. 确认 `/data/user_de/0/com.android.providers.telephony/databases/mmssms.db`
+4. 失败则 `am force-stop` provider 再试
+5. 成功则 touch sentinel；失败不写 sentinel，下次开机重试
+
+#### Radio stub（v24）
+
+- 启动日志串：`smartrun-radio-stub starting (v24)`
+- AIDL：config / sim / modem / network / voice / data / messaging
+- 源码路径字符串：`device/redroid/radio-stub/{main,RadioSim,RadioModem,RadioData,RadioMessaging,RadioConfig,RadioNetwork,RadioVoice}.cpp`
+- 由 `vendor.smartrun.telephony.enabled=1` 拉起
+
+#### Pixel 桌面
+
+- `ro.boot.smartrun.pixel.launcher.enabled=1` → NexusLauncher + `com.smartrun.overlay.pixelicons`
+- `=0` → Launcher3 + 关闭 overlay
+
+#### 预装 AW 任务 App
+
+Markor、Joplin、OsmAnd、OpenTracks、Tasks、MiniWoB（`com.google.androidenv.miniwob`）、`com.example.androidworld`、Simple Mobile Tools 套件、Appium 等。MiniWoB/`androidworld` APK 主要是 WebView 任务资源（`assets/html/miniwob/*`），偏基准内容而非 SmartRun 核心逻辑。
+
+#### 与上游 Android World
+
+| | 上游 | 本沙箱 adapt |
+|---|---|---|
+| 仓库 | `google-research/android_world` | SmartRun 镜像内闭源适配 |
+| 运行时 | Emulator + AndroidEnv | Redroid + Appium/ADB/scrcpy |
+| adapt 解决什么 | — | SMS DB、radio stub、桌面、应用集 |
+| gRPC `:8554` | 常见 | **无** |
+
+#### 逆向要点
+
+1. 构建入口是产品树开关，不是运行时动态下载的插件。  
+2. v23 真正修的是 FBE 下 SMS provider DB 缺失导致 AW SMS 任务失败。  
+3. radio-stub 有 `device/redroid/radio-stub/*.cpp` 线索，完整树未公开。  
+4. 可读脚本/rc 已入库；ELF/大 APK 仅留在实验机 `/tmp/ags-probe/adapt-extract/`。
+
+#### 附录：抽取脚本 / rc 全文
+
+以下内容与 `artifacts/android-world-adapt-v23/` 中文件一致。
+
+##### `init.redroid.android-world-telephony.sh`
+
+```sh
+#!/vendor/bin/sh
+# SmartRun Android World Adaptation (v23.2)
+# Telephony provider bootstrap: ensure mmssms.db exists for AndroidWorld SMS tasks.
+#
+# Fix (v23.2): Android 14 FBE stores the db under /data/user_de/0/ instead of
+# /data/data/. The script now checks the correct FBE path.
+
+SENTINEL=/data/local/tmp/.android-world-telephony-init.done
+DB_DIR=/data/user_de/0/com.android.providers.telephony/databases
+DB_PATH=$DB_DIR/mmssms.db
+LOG_TAG=aw_tel_init
+
+log() {
+    /system/bin/log -t "$LOG_TAG" "$@"
+    echo "[$LOG_TAG] $*"
+}
+
+# Fast exit if already done.
+if [ -f "$SENTINEL" ] && [ -f "$DB_PATH" ]; then
+    log "already bootstrapped: $DB_PATH exists"
+    exit 0
+fi
+
+log "bootstrap starting..."
+
+# Retry loop: ContentResolver may not be ready immediately after boot_completed.
+# Wait up to ~30s for the provider to respond.
+for i in 1 2 3 4 5 6; do
+    /system/bin/content query \
+        --uri content://sms/inbox \
+        --projection _id >/dev/null 2>&1
+    rc_sms=$?
+
+    /system/bin/content query \
+        --uri content://mms/inbox \
+        --projection _id >/dev/null 2>&1
+    rc_mms=$?
+
+    if [ -f "$DB_PATH" ]; then
+        log "mmssms.db created after attempt $i (sms rc=$rc_sms mms rc=$rc_mms)"
+        break
+    fi
+
+    log "attempt $i: db not yet present (sms rc=$rc_sms mms rc=$rc_mms), sleeping 5s"
+    sleep 5
+done
+
+# Fallback: if still not created, try force-stopping and manually triggering
+# the provider process.
+if [ ! -f "$DB_PATH" ]; then
+    log "fallback: force-stop + retry"
+    /system/bin/am force-stop com.android.providers.telephony 2>/dev/null
+    sleep 2
+    /system/bin/content query --uri content://sms/inbox --projection _id >/dev/null 2>&1
+    sleep 2
+fi
+
+if [ -f "$DB_PATH" ]; then
+    log "bootstrap OK: $DB_PATH size=$(stat -c%s "$DB_PATH" 2>/dev/null)"
+    mkdir -p "$(dirname "$SENTINEL")"
+    touch "$SENTINEL"
+    exit 0
+else
+    log "bootstrap FAILED: $DB_PATH still missing"
+    # Do not mark sentinel so next boot retries.
+    exit 1
+fi
+```
+
+##### `init.redroid.pixel.sh`
+
+```sh
+#!/system/bin/sh
+# v30 Pixel Launcher runtime switch
+# androidboot.smartrun.pixel.launcher.enabled=1 = Pixel desktop + round icons
+# androidboot.smartrun.pixel.launcher.enabled=0 = Launcher3 + AOSP default icons
+
+PIXEL="com.google.android.apps.nexuslauncher"
+AOSP="com.android.launcher3"
+PIXEL_HOME="$PIXEL/.NexusLauncherActivity"
+AOSP_HOME="$AOSP/.uioverrides.QuickstepLauncher"
+ICON_OVERLAY="com.smartrun.overlay.pixelicons"
+
+while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 0.5; done
+sleep 2
+
+MODE=$(getprop ro.boot.smartrun.pixel.launcher.enabled)
+MODE=${MODE:-1}
+
+echo "[pixel-init] mode=$MODE"
+
+if [ "$MODE" = "0" ]; then
+    # Launcher3 + AOSP square icons
+    echo "[pixel-init] Launcher3 + Square icons"
+    pm enable $AOSP 2>/dev/null
+    pm disable $PIXEL 2>/dev/null
+    cmd package set-home-activity "$AOSP_HOME" 2>/dev/null
+    cmd overlay disable $ICON_OVERLAY 2>/dev/null
+    pm enable com.android.quicksearchbox 2>/dev/null
+else
+    # Pixel Launcher + Round icons (default)
+    echo "[pixel-init] Pixel Launcher + Round icons"
+    pm disable $AOSP 2>/dev/null
+    pm enable $PIXEL 2>/dev/null
+    cmd package set-home-activity "$PIXEL_HOME" 2>/dev/null
+    cmd overlay enable $ICON_OVERLAY 2>/dev/null
+    pm disable com.android.quicksearchbox 2>/dev/null
+fi
+
+echo "[pixel-init] Done."
+```
+
+##### `init.redroid.rc` v23 段（telephony service）
+
+```rc
+# ===== v23: AndroidWorld adaptation — Telephony provider bootstrap =====
+# ============================================================
+# 触发条件：
+#   ro.smartrun.build.android_world_adapt=1（由 TARGET_INCLUDE_ANDROID_WORLD_ADAPT=true 编译时写入）
+#   && sys.boot_completed=1
+#
+# 作用：通过 ContentResolver 触发 com.android.providers.telephony 的 onCreate()，
+# 确保 /data/data/com.android.providers.telephony/databases/mmssms.db 物理存在。
+# AndroidWorld 的 SMS 任务需要 sqlite3 直读该 db 才能执行 initialize_task。
+#
+# 普通 redroid 镜像（ro.smartrun.build.android_world_adapt 未设置）不会触发此 service。
+on property:sys.boot_completed=1 && property:ro.smartrun.build.android_world_adapt=1
+    exec_start android_world_telephony_init
+
+service android_world_telephony_init /vendor/bin/init.redroid.android-world-telephony.sh
+    class core
+    user root
+    group system
+    seclabel u:r:vendor_init:s0
+    oneshot
+    disabled
+```
+
+##### `smartrun-radio-stub.rc`
+
+```rc
+service smartrun-radio-stub /vendor/bin/smartrun-radio-stub
+    class hal
+    user radio
+    group radio system
+    interface aidl android.hardware.radio.config.IRadioConfig/default
+    interface aidl android.hardware.radio.sim.IRadioSim/slot1
+    interface aidl android.hardware.radio.modem.IRadioModem/slot1
+    interface aidl android.hardware.radio.network.IRadioNetwork/slot1
+    interface aidl android.hardware.radio.voice.IRadioVoice/slot1
+    interface aidl android.hardware.radio.data.IRadioData/slot1
+    interface aidl android.hardware.radio.messaging.IRadioMessaging/slot1
+    disabled
+
+on property:vendor.smartrun.telephony.enabled=1
+    start smartrun-radio-stub
+
+on property:persist.vendor.smartrun.telephony.enabled=1
+    start smartrun-radio-stub
+
+on property:persist.vendor.smartrun.telephony.enabled=0
+    stop smartrun-radio-stub
+```
+
 ### 3.3 阶段 C：官方是否提供硬件 mock？
+
 
 **文档 / CLI**：未发现 WiFi RSSI/AP、Camera 注入、GNSS 注入、BT mock、传感器注入的产品 API。官方能力止于 UI 自动化链路。
 
@@ -325,7 +570,7 @@ agr instance mobile --help
 
 1. **官方未提供硬件 mock 产品能力**（WiFi 信号/AP、Camera、GNSS、BT、传感器等）。控制面只有 Appium / ADB / scrcpy。  
 2. **底层不是 Emulator，也不是 Cuttlefish**；是 Cube Hypervisor + SmartRun/Redroid Android 14。  
-3. **android-world 不是另一套虚拟化**，而是同底座加 AW 应用与适配（v23）。  
+3. **android-world 不是另一套虚拟化**，而是同底座加 SmartRun `android_world_adapt`（v23）；逆向见 §3.2.1——编译开关 `TARGET_INCLUDE_ANDROID_WORLD_ADAPT`，核心是 telephony `mmssms.db` bootstrap + radio stub + Pixel/应用预装。  
 4. **专项命令复测**：诊断类 dumpsys/getprop/ip **大多可用**；作为 mock——WiFi 启用/扫描/SoftAP **失败**，GNSS 文件可写但 **location 不更新**，`cmd location` test provider **被拒绝**，BT enable **名成功实失败**，传感器 **无设备**，电池文件可写但 **sysfs 未挂上**。  
 5. **上游 AndroidWorld / AndroidEnv 依赖的 Emulator gRPC(8554) a11y 通路在此环境不存在**；若要复用原 pipeline，需自建适配，而非依赖腾讯官方兼容说明。  
 6. **Android 版本不可在 mobile/android-world 预置类型上配置**；仅 `custom` 可自带镜像（且 custom 面向容器配置，不等同于官方 Android 硬件仿真）。  
@@ -346,8 +591,19 @@ agr instance mobile --help
 | `hw_mock_probe.txt` / `hw_mock_probe2.txt` / `hw_mock_probe3.txt` | 早期硬件 mock 专项 dumpsys / GPS 文件注入 / 网卡 |
 | `hw_cmd_matrix/`（`D01`–`D13`、`M01`–`M18`） | **2026-07-23 复测**逐条命令 JSON/文本结果 |
 | `hw_test_instance_id.txt` | 复测 InstanceId |
+| `adapt-extract/` | **2026-07-25** android_world_adapt 抽取（脚本/ELF/APK）；可读部分已入库见下 |
 | `*_connect.json` / `*_instance*.json` | connect / instance 元数据 |
 | `scrcpy_*.txt` | 投屏会话相关记录 |
+
+**已入库的 adapt 抽取物**（相对本文件）：`artifacts/android-world-adapt-v23/`
+
+| 文件 | 说明 |
+|---|---|
+| `init.redroid.android-world-telephony.sh` | v23.2 telephony bootstrap 全文 |
+| `init.redroid.pixel.sh` | Pixel/Launcher3 切换脚本 |
+| `init.redroid.rc` | 完整 vendor init（含 v20 WiFi / v23 AW 注释） |
+| `init.redroid.rc.v23-snippet.rc` | 仅 v23 telephony 段 |
+| `smartrun-radio-stub.rc` / `smartrun-radio-stub.manifest.xml` | Radio stub 服务与 VINTF |
 
 ---
 

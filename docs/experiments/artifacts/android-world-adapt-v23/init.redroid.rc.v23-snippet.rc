@@ -1,0 +1,22 @@
+# extracted from init.redroid.rc around line 203
+# ===== v23: AndroidWorld adaptation — Telephony provider bootstrap =====
+# ============================================================
+# 触发条件：
+#   ro.smartrun.build.android_world_adapt=1（由 TARGET_INCLUDE_ANDROID_WORLD_ADAPT=true 编译时写入）
+#   && sys.boot_completed=1
+#
+# 作用：通过 ContentResolver 触发 com.android.providers.telephony 的 onCreate()，
+# 确保 /data/data/com.android.providers.telephony/databases/mmssms.db 物理存在。
+# AndroidWorld 的 SMS 任务需要 sqlite3 直读该 db 才能执行 initialize_task。
+#
+# 普通 redroid 镜像（ro.smartrun.build.android_world_adapt 未设置）不会触发此 service。
+on property:sys.boot_completed=1 && property:ro.smartrun.build.android_world_adapt=1
+    exec_start android_world_telephony_init
+
+service android_world_telephony_init /vendor/bin/init.redroid.android-world-telephony.sh
+    class core
+    user root
+    group system
+    seclabel u:r:vendor_init:s0
+    oneshot
+    disabled
