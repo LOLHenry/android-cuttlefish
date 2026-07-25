@@ -191,17 +191,55 @@ Exec format error
 
 ### 6.1 `boringssl_self_test32` / `boringssl-self-check-failed`
 
+**重要：** `lunch` / 编译配置叫 `arm64_only_phone`，不等于运行时一定是 only。
+
+A15 上 vendor/system 都是按 `ro.zygote` 选择触发脚本：
+
+- `ro.zygote=zygote64` → 只 `exec_start` `*_test64`
+- `ro.zygote=zygote64_32` → 会 `exec_start` `*_test32`（以及 64）
+
+init 对 `property:ro.product.cpu.abilist32=*` 的规则是：**属性必须非空才匹配**。  
+真正的 64-only 上 `abilist32` 为空，即使旧式 abilist 触发脚本也不会启动 32 位测试。
+
+因此：只要日志里出现 `starting service 'boringssl_self_test32...`，就说明运行时 **不是** 纯 `zygote64` only 路径。
+
 | 检查 | 正常（arm64_only） | 异常含义 |
 |---|---|---|
-| `ro.zygote` | `zygote64` | 变成 `zygote64_32` → guest 不是 only，或镜像混用 |
-| `abilist32` | 空 | 非空 → 会跑 32 位 self-test |
-| init 日志 | 只见 `boringssl_self_test64` | 出现 `*_test32` + `Exec format error` → 32 位用户态与内核不匹配 |
+| `ro.zygote` | `zygote64` | `zygote64_32` / 其它 → 不是 only，或 vendor 被混包 |
+| `abilist32` | 空 | 非空 → 会走 32 位 self-test（尤其旧式 rc / 混包） |
+| init 日志 | 只见 `*_test64` | 出现 `starting service 'boringssl_self_test32` |
+| `/vendor/bin/boringssl_self_test32` | 通常不存在 | 存在 → vendor 很像非 only 或被替换过 |
+
+**离线核对（不必等开机成功）：**
+
+```bash
+GUEST_DIR=...   # product_path
+
+# 1) 看 android-info / 产物名是否真是 only
+grep -E 'device|name|abi' "$GUEST_DIR/android-info.txt" 2>/dev/null || true
+ls "$GUEST_DIR" | grep -E 'img|android-info'
+
+# 2) 从 vendor 镜像看 zygote / abilist（需要 simg2img/debugfs 或已解出的 vendor）
+# 期望 vendor build.prop 含：
+#   ro.zygote=zygote64
+#   ro.vendor.product.cpu.abilist32=   (空)
+# 且存在：
+#   /vendor/etc/boringssl_self_test.zygote64.rc
+# 不应依赖 zygote64_32.rc 来启动 self-test
+
+# 3) kernel/init 日志里搜触发证据
+grep -E "boringssl_self_test|ro.zygote|abilist32|boringssl-self-check" \
+  "$HOME"/cuttlefish/instances/*/logs/* 2>/dev/null
+```
 
 处理：
 
-1. 重新 fetch，确保 `--default_build` 的 target 全程一致（only 就全 only）。  
-2. 不要混 `arm64_phone` 与 `arm64_only_phone` 的分区。  
-3. 不要把 A16 的 `boot.img` / kernel 塞进 A15/A14 guest。
+1. **清掉旧目录后重新 fetch**，`--default_build` 全程同一个 `aosp_cf_arm64_only_phone-...`，不要另加 `--system_build` 指向非 only。  
+2. 不要把 A16/非 only 的 `vendor*.img` / `super.img` 解压进 A15 only 目录。  
+3. 不要用 A16 kernel 覆盖 guest `boot.img`。  
+4. 对照实验：同一套 A15 only 镜像，用 **A15 matched host** 启一次。  
+   - matched 也挂 → guest 镜像本身不是 only / 已损坏  
+   - matched 能起、仅 A16 host 挂 → 再查 host 是否改写了 boot/vendor（bootloader、repack、错误 product_path）
 
 ### 6.2 卡在 early boot / HAL / APEX
 
