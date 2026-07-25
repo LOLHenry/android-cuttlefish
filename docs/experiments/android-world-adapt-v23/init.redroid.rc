@@ -1,0 +1,258 @@
+# Redroid AV POC: fix /dev/video* permissions for cameraserver
+# In --privileged Docker containers, /dev/video* is created by the host
+# with root:video 660. cameraserver (UID 1047) cannot access them.
+# Must use "on init" (not "on boot"!) because init sequence is:
+#   on early-init → on init → on late-init → class_start hal → ... → on boot
+# Camera provider belongs to class hal, so chmod must happen before class_start hal.
+#
+# Binder devices: on hosts without binderfs (CONFIG_ANDROID_BINDERFS is not set),
+# legacy binder devices are created as crw------- (root only). All non-root
+# Android processes (servicemanager, HALs, system_server) need access.
+# This is a no-op on binderfs hosts where permissions are already correct.
+on init
+    chmod 0666 /dev/binder
+    chmod 0666 /dev/hwbinder
+    chmod 0666 /dev/vndbinder
+    chmod 0666 /dev/video0
+    chmod 0666 /dev/video1
+    chmod 0666 /dev/video2
+    chmod 0666 /dev/video3
+    chmod 0666 /dev/video4
+    chmod 0666 /dev/video5
+    chmod 0666 /dev/video6
+    chmod 0666 /dev/video7
+    chmod 0666 /dev/video8
+    chmod 0666 /dev/video9
+    chmod 0666 /dev/video10
+    chmod 0666 /dev/video42
+
+# ============================================================
+# Houdini native bridge — binfmt_misc support
+# (集成指南步骤 3: 启用 binfmt_misc)
+# 让内核识别 ARM ELF 二进制并调用 houdini 翻译器执行。
+# 注意：mount binfmt_misc 需要 --privileged 或 CAP_SYS_ADMIN。
+# ============================================================
+
+on early-init
+    mount binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc
+
+# 32-bit ARM 翻译（当 ro.vendor.enable.native.bridge.exec=1 时触发）
+on property:ro.vendor.enable.native.bridge.exec=1
+    copy /vendor/etc/binfmt_misc/arm_exe /proc/sys/fs/binfmt_misc/register
+    copy /vendor/etc/binfmt_misc/arm_dyn /proc/sys/fs/binfmt_misc/register
+
+# 64-bit ARM64 翻译（当 ro.vendor.enable.native.bridge.exec64=1 时触发）
+on property:ro.vendor.enable.native.bridge.exec64=1
+    copy /vendor/etc/binfmt_misc/arm64_exe /proc/sys/fs/binfmt_misc/register
+    copy /vendor/etc/binfmt_misc/arm64_dyn /proc/sys/fs/binfmt_misc/register
+
+# SmartRun v20: Container-autonomous WiFi init.rc segment
+# =========================================================
+# 本文件内容将追加到 device/redroid/init.redroid.rc
+# 替换 v16~v19 的 WiFi Phase 1 服务定义 + Phase 2 override rc + property trigger
+#
+# 架构变更：
+#   v19: AP/DHCP/NAT 在宿主机，eth0 在容器内（"eth0 down/up" 时序 hack）
+#   v20: AP/DHCP/NAT 在容器内 router namespace，eth0 迁入 router ns（治本）
+#
+# 保留 SmartRun 特有：
+#   - persist.smartrun.wifi.enabled 动态开关（Phase 2）
+#   - AIDL wpa_supplicant 接口（Android 14 标准）
+#   - captive_portal_mode=0（待 v20.1 验证是否可恢复默认）
+
+# ===== 目录创建 =====
+on boot
+    # Network namespace infrastructure
+    mkdir /data/vendor/var 0755 root root
+    mkdir /data/vendor/var/run 0755 root root
+    mkdir /data/vendor/var/run/netns 0755 root root
+    # createns2 needs these files as bind-mount points for namespace persistence
+
+    # WiFi interface property
+    setprop wifi.interface wlan0
+    setprop wifi.direct.interface p2p-dev-wlan0
+
+    # WiFi data directories
+    mkdir /data/vendor/wifi 0771 wifi wifi
+    mkdir /data/vendor/wifi/wpa 0770 wifi wifi
+    mkdir /data/vendor/wifi/wpa/sockets 0770 wifi wifi
+    mkdir /data/vendor/wifi/hostapd 0770 wifi wifi
+
+
+# ===== WiFi 启动控制（仅启动时，v20.1 简化） =====
+# docker run 传入 androidboot.smartrun.wifi.enabled=1 → 启动 WiFi
+# 不传或 =0 → WiFi 不启动，容器走 eth0 直连
+# 不支持运行时动态切换（v20 架构下基础设施一旦建好不应拆除）
+on early-boot && property:ro.boot.smartrun.wifi.enabled=1
+    setprop persist.smartrun.wifi.enabled 1
+    start redroid_wifi_setup
+
+# ADB: boot_completed 后注入 ip rule（绕过 Android 32000:unreachable）
+on property:sys.boot_completed=1 && property:smartrun.adb.dnat.ready=1
+    exec -- /system/bin/ip rule add from 7.8.8.2 lookup main prio 15000
+
+# Captive portal: 禁用检测（容器内 HTTPS 探针因 GFW/DoT 超时导致 PARTIAL_CONNECTIVITY）
+# HTTP 探针可达但 HTTPS 不可达 → Android 判定为"连接受限"。容器场景无需 captive portal。
+on property:sys.boot_completed=1 && property:ro.boot.smartrun.wifi.enabled=1
+    exec -- /system/bin/settings put global captive_portal_mode 0
+    exec -- /system/bin/settings put global captive_portal_detection_enabled 0
+    exec -- /system/bin/settings put global private_dns_mode off
+
+
+# ===== 服务定义 =====
+
+
+# 容器自治 WiFi 初始化总入口
+# 执行 init.redroid.wifi.sh 完成：
+#   1. 创建 router namespace
+#   2. create_radios2 创建虚拟 radio
+#   3. hostapd + dnsmasq + NAT 配置
+#   4. radio0 veth pair（RIL 模拟）
+#   5. eth0 迁入 router namespace
+service redroid_wifi_setup /system/bin/logwrapper /vendor/bin/hw/init.redroid.wifi.sh
+    class late_start
+    user root
+    group root wakelock wifi net_admin net_raw
+    oneshot
+    disabled
+
+# Router namespace 创建（由 init.redroid.wifi.sh 通过 setprop ctl.start 启动）
+service redroid_router_ns /vendor/bin/createns2 router
+    user root
+    group root
+    disabled
+    oneshot
+
+# IPv6 代理（router namespace 中运行，代理 eth0 ↔ br0/radio0-peer）
+service redroid_ipv6proxy /vendor/bin/execns2 router /vendor/bin/ipv6proxy2 -o eth0 -i br0,radio0-peer
+    user root
+    group root
+    disabled
+
+# 容器内 hostapd（在 router namespace 中运行，管理 wlan1 AP）
+# AOSP 14 中 hostapd 的无 AIDL 版本模块名是 hostapd_noaidl（非 rockchip 的 hostapd_nohidl）
+# 安装路径: /vendor/bin/hw/hostapd
+service redroid_hostapd /vendor/bin/execns2 router /vendor/bin/hw/hostapd /data/vendor/wifi/hostapd/redroid_hostapd.conf
+    user root
+    group root wifi net_raw net_admin
+    disabled
+
+# 容器内 dnsmasq（在 router namespace 中运行，DHCP + DNS）
+# 国内 DNS 119.29.29.29 / 223.5.5.5（已验证必须，8.8.8.8 在中国大陆不通）
+# DHCP 范围 192.168.100.100~199，网关 192.168.100.1
+# v26: dhcpserver2 replaces dnsmasq 2.51 — no CPU spinning (uses ppoll)
+# dnsmasq 2.51 busy-loops on mac80211_hwsim netlink events (~74k syscalls/3s)
+service redroid_dnsmasq /vendor/bin/execns2 router /vendor/bin/dhcpserver2
+    user root
+    group root wifi net_raw net_admin
+    disabled
+    oneshot
+
+# wpa_supplicant（AIDL 接口，SmartRun 保留）
+# 由 WiFi HAL 在 IWifi.start() 时按需拉起
+service wpa_supplicant /vendor/bin/hw/wpa_supplicant \
+    -O/data/vendor/wifi/wpa/sockets -puse_p2p_group_interface=1 \
+    -g@android:wpa_wlan0
+    interface aidl android.hardware.wifi.supplicant.ISupplicant/default
+    class main
+    socket wpa_wlan0 dgram 660 wifi wifi
+    disabled
+    oneshot
+
+
+# ============================================================
+# ===== GPS v17 ===== GNSS HAL — seed default coords on first boot
+# ============================================================
+# gnss-service 本身随 class hal 自动启动（由 gnss-xxx-service.rc 安装）。
+# 此处仅保证 /data/vendor/gps 目录存在并写入默认坐标。
+on post-fs-data
+    mkdir /data/vendor/gps 0771 system system
+    exec_start init_redroid_gps
+
+service init_redroid_gps /vendor/bin/init.redroid.gps.sh
+    class core
+    user root
+    group system
+    seclabel u:r:vendor_init:s0
+    oneshot
+    disabled
+
+# ============================================================
+# ===== v21: Battery power_supply simulation =====
+# ============================================================
+on post-fs-data
+    mkdir /data/vendor/battery 0751 root root
+    exec_start init_redroid_battery
+
+service init_redroid_battery /vendor/bin/init.redroid.battery.sh
+    class core
+    user root
+    group system
+    seclabel u:r:vendor_init:s0
+    oneshot
+    disabled
+
+# ============================================================
+# ===== v21: FUSE connections leak fix =====
+# https://github.com/remote-android/redroid-doc/issues/354
+# ============================================================
+on late-init
+    umount /sys/fs/fuse/connections
+
+# ============================================================
+# ===== v23: AndroidWorld adaptation — Telephony provider bootstrap =====
+# ============================================================
+# 触发条件：
+#   ro.smartrun.build.android_world_adapt=1（由 TARGET_INCLUDE_ANDROID_WORLD_ADAPT=true 编译时写入）
+#   && sys.boot_completed=1
+#
+# 作用：通过 ContentResolver 触发 com.android.providers.telephony 的 onCreate()，
+# 确保 /data/data/com.android.providers.telephony/databases/mmssms.db 物理存在。
+# AndroidWorld 的 SMS 任务需要 sqlite3 直读该 db 才能执行 initialize_task。
+#
+# 普通 redroid 镜像（ro.smartrun.build.android_world_adapt 未设置）不会触发此 service。
+on property:sys.boot_completed=1 && property:ro.smartrun.build.android_world_adapt=1
+    exec_start android_world_telephony_init
+
+service android_world_telephony_init /vendor/bin/init.redroid.android-world-telephony.sh
+    class core
+    user root
+    group system
+    seclabel u:r:vendor_init:s0
+    oneshot
+    disabled
+
+# ============================================================
+# ===== v28: Android ID auto-generation =====
+# ============================================================
+# 触发条件：sys.boot_completed=1（SettingsProvider 已就绪）
+# 作用：在 /data/vendor/.android_id_initialized marker 不存在时，
+# 为当前 /data 卷生成唯一的 16 位十六进制 ANDROID_ID 并写入
+# Settings.Secure，防止快照/预置卷导致多容器 ID 冲突。
+# marker 写入后，后续重启幂等跳过。
+on property:sys.boot_completed=1
+    exec_start init_redroid_android_id
+
+service init_redroid_android_id /vendor/bin/init.redroid.android-id.sh
+    class core
+    user root
+    group root
+    seclabel u:r:vendor_init:s0
+    oneshot
+    disabled
+
+# ============================================================
+# ===== v30: Pixel Launcher default setup =====
+# ============================================================
+# 触发条件：sys.boot_completed=1
+# 作用：禁用 AOSP Launcher3QuickStep，将 Pixel Launcher 设为默认 HOME
+on property:sys.boot_completed=1
+    exec_start init_redroid_pixel
+
+service init_redroid_pixel /vendor/bin/init.redroid.pixel.sh
+    class core
+    user root
+    group root
+    seclabel u:r:vendor_init:s0
+    oneshot
+    disabled
