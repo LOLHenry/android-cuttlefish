@@ -239,7 +239,65 @@ grep -E "boringssl_self_test|ro.zygote|abilist32|boringssl-self-check" \
 3. 不要用 A16 kernel 覆盖 guest `boot.img`。  
 4. 对照实验：同一套 A15 only 镜像，用 **A15 matched host** 启一次。  
    - matched 也挂 → guest 镜像本身不是 only / 已损坏  
-   - matched 能起、仅 A16 host 挂 → 再查 host 是否改写了 boot/vendor（bootloader、repack、错误 product_path）
+   - matched 能起、仅 A16 host 挂 → 见下一节「6.1.1」
+
+#### 6.1.1 matched A15 host 能起、A16 host 不起（已确认时）
+
+此时不要再怀疑 lunch 名；优先 diff **host 静默注入的东西**。
+
+| 优先级 | 差异点 | 怎么验证 |
+|---|---|---|
+| 1 | **Bootloader** | guest 目录通常没有 `bootloader`；assemble 会改用 host 包内 `etc/bootloader_<arch>/bootloader.<vmm>`。A15 host→A16 host 时这里会换掉 |
+| 2 | 目录混用 | A16 `cvd-host_package.tar.gz` 解压覆盖到 A15 目录，或 `host_path`/`product_path` 指错 |
+| 3 | kernel/initramfs 被覆盖 | 日志里是否出现非空 `kernel_path` / `kernel_hotswapped` |
+| 4 | 新 host 的 bootconfig/APEX | 一般晚于 boringssl；先确认 test32 是否真的被 `starting service` |
+
+**推荐复现步骤（分离目录 + 钉死 A15 bootloader）：**
+
+```bash
+# 目录分离，避免覆盖
+A16_HOST=$PWD/a16-host
+A15_GUEST=$PWD/a15-guest
+A15_HOST=$PWD/a15-host   # matched 能开机的那套 host
+
+# 1) 先确认 A16 host + A15 guest（分离目录）是否仍复现
+HOME=$A15_GUEST $A16_HOST/bin/cvd create \
+  --host_path=$A16_HOST \
+  --product_path=$A15_GUEST \
+  --daemon
+
+# 2) 若复现：强制用 A15 host 包里的 bootloader（路径按 arch/vmm 改）
+# arm64 + crosvm 常见：
+BL=$A15_HOST/etc/bootloader_aarch64/bootloader.crosvm
+
+HOME=$A15_GUEST $A16_HOST/bin/cvd create \
+  --host_path=$A16_HOST \
+  --product_path=$A15_GUEST \
+  --bootloader=$BL \
+  --daemon
+```
+
+也可 fetch 时显式拉 A15 bootloader：
+
+```bash
+cvd fetch \
+  --host_package_build=aosp-android-latest-release/aosp_cf_arm64_only_phone-userdebug \
+  --default_build=aosp-android15-gsi/aosp_cf_arm64_only_phone-userdebug \
+  --bootloader_build=aosp-android15-gsi/aosp_cf_arm64_only_phone-userdebug \
+  --target_directory=$PWD/cf-mixed
+```
+
+**仍失败时，从 A16 失败日志里贴这几行（比猜测有用）：**
+
+```text
+bootloader=...
+kernel_path=...
+Parsing file .../boringssl_self_test...
+starting service 'boringssl_self_test...
+cannot execv(...boringssl_self_test...
+```
+
+若 `starting service` 是 `*_test64` 而不是 `*_test32`，说明之前对 “32” 的判断需要按实际 service 名修正。
 
 ### 6.2 卡在 early boot / HAL / APEX
 
