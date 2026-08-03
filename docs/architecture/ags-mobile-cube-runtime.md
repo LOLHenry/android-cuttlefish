@@ -10,11 +10,17 @@
 
 外围（客户端、Cloud API、Cube Host）略。只展开 **MicroVM 里跑什么**，以及各自对应哪条对外服务。
 
+> 两个常被漏画、但必须区分的组件：  
+> - **shim-agent（Guest Agent）**：Cube 平台在 Guest 内的代理，经 **vsock** 对接 Host 上的 **CubeShim**（容器生命周期、就绪、日志转发等）。  
+> - **envd**：E2B 兼容数据面守护进程（常见 **:49983**），承载 SDK 侧鉴权 token 模型 / health；完整 `commands`/`files` 主要在 code 类沙箱。Mobile 上官方交互仍以 Appium/ADB/scrcpy 为主。
+
 ```mermaid
 flowchart TB
   subgraph Guest["Guest Linux MicroVM"]
     Kernel["Guest Kernel<br/>cube.bm.guest / overlay2 /run/cube-containers"]
-    Agent["*Guest Agent + 端口暴露*<br/>把实例端口挂到数据面"]
+
+    ShimAgent["shim-agent / Guest Agent<br/>vsock ↔ Host CubeShim<br/>拉起/监管容器、就绪、日志"]
+    Envd["envd :49983<br/>E2B 数据面守护<br/>token / health / commands·files*"]
     AdbSrv["*adb server*"]
     Appium["*Appium Server :4723*"]
     ScrcpyWeb["*ws-scrcpy Web/代理 :8000*"]
@@ -29,11 +35,12 @@ flowchart TB
       Apps["预装 App<br/>+ AW adapt（仅 android-world）"]
     end
 
-    Kernel --> Agent
+    Kernel --> ShimAgent
+    Kernel --> Envd
     Kernel --> AdbSrv
     Kernel --> Appium
     Kernel --> ScrcpyWeb
-    Kernel --> Redroid
+    ShimAgent -->|"创建/启动/监管"| Redroid
 
     Appium -->|"ADB 会话"| UIA2
     ScrcpyWeb -->|"proxy-adb → tcp:8886"| ScrcpySrv
@@ -48,11 +55,14 @@ flowchart TB
   end
 ```
 
+\* `commands` / `files`：Cube/E2B 通用能力经 envd；**AGS Mobile 官方不把它当主路径**（无终端登录、不以 `commands.run` 文档化）。
+
 ### 模块说明与对外服务一一对应
 
 | 所在层 | 模块 | 做什么 | 对外服务（一一对应） |
 |---|---|---|---|
-| Guest Linux | *Guest Agent + 端口暴露* | 维持实例侧网络/端口，供 `get_host(port)` 映射 | **E2B Sandbox**（Mobile 上主要是 host/token 通路，不是 `commands.run`） |
+| Guest Linux | **shim-agent / Guest Agent** | 经 vsock 听 Host **CubeShim**：容器 create/start、就绪信号、stdout/stderr 日志转发、pause 前清理等 | **agr CLI / 实例生命周期** 的 Guest 侧底座（不直接对外开 HTTP 业务口） |
+| Guest Linux | **envd :49983** | E2B 沙箱内守护：health、鉴权（`_envd_access_token` 同源模型）、以及 code 类沙箱的 commands/files | **E2B Sandbox**（Mobile：create/connect + token + `get_host`；完整 run_code/commands **非官方主路径**） |
 | Guest Linux | *Appium Server :4723* | 收 Appium HTTP，驱动设备自动化 | **Appium** |
 | Guest Linux | *ws-scrcpy :8000* | Web 投屏页；把 WS 代理到设备 `tcp:8886` | **scrcpy**（入口） |
 | Guest Linux | *adb server* | 连接容器内 `adbd`，承接云侧 ADB 隧道 | **ADB** / **agr CLI** `mobile connect\|adb` |
@@ -64,15 +74,24 @@ flowchart TB
 | Redroid | SmartRun stubs | wifi/gps/radio/battery 等内部桩 | **不对外**提供产品级硬件 mock 服务 |
 | Redroid | 预装 App / AW adapt | 业务/评测应用与属性 | 应用内容，不是控制面接口 |
 
+### envd vs shim-agent（易混）
+
+| | **shim-agent** | **envd** |
+|---|---|---|
+| 归属 | Cube 虚拟化/容器平台 | E2B 协议数据面 |
+| 通信 | **vsock** ↔ Host CubeShim | **TCP :49983**（经数据面网关 / token） |
+| 主要职责 | 容器生命周期、就绪、日志 | SDK 操作沙箱（health；code 类 commands/files） |
+| 用户是否直接调 | 否（agr/Cloud 启停间接触发） | 是（E2B SDK；Mobile 上能力收窄） |
+
 ### 对外服务 ← 模块（反查）
 
-| 对外服务 | Guest Linux 模块 | Redroid 模块 | 端口 |
+| 对外服务 | Guest Linux 模块 | Redroid 模块 | 端口 / 通道 |
 |---|---|---|---|
-| **E2B Sandbox** | *端口暴露 / get_host 落点* | — | 443 映射到实例端口 |
+| **E2B Sandbox** | **envd**（+ 端口映射） | — | **49983**；业务口再 `get_host` |
+| **agr CLI（生命周期）** | **shim-agent**（被 Host Shim 驱动） | Redroid 进程由 agent 拉起 | vsock（平台内） |
 | **Appium** | *Appium :4723* | UiAutomator2 | **4723** |
 | **scrcpy** | *ws-scrcpy :8000* | scrcpy-server | **8000 → 8886** |
-| **ADB** | *adb server* | adbd | 隧道 → adbd |
-| **agr CLI（mobile）** | *adb server*（经隧道） | adbd | 同 ADB |
+| **ADB** / **agr mobile** | *adb server* | adbd | ADB 隧道 → adbd |
 
 ---
 
