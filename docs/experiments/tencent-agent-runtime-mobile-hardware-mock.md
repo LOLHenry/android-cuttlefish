@@ -580,7 +580,9 @@ on property:persist.vendor.smartrun.telephony.enabled=0
 
 ## 5. 原始产物索引
 
-试验过程落盘于实验机 `/tmp/ags-probe/`（未全部入库）：
+> **命令与产物总索引**（阶段命令、Tool/Instance ID、持久化边界）：[`ags-probe-commands-and-artifacts.md`](./ags-probe-commands-and-artifacts.md)。
+
+试验过程落盘于实验机 `/tmp/ags-probe/`（未全部入库；**当前环境已不存在**）：
 
 | 文件 | 内容 |
 |---|---|
