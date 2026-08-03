@@ -385,6 +385,7 @@ sequenceDiagram
 ## 7. 参考
 
 - 实验记录：[`docs/experiments/tencent-agent-runtime-mobile-hardware-mock.md`](../experiments/tencent-agent-runtime-mobile-hardware-mock.md)
+- 探测命令 / 产物索引：[`docs/experiments/ags-probe-commands-and-artifacts.md`](../experiments/ags-probe-commands-and-artifacts.md)
 - 官方： [手机操作](https://cloud.tencent.com/document/product/1814/127484) · [Mobile ADB](https://cloud.tencent.com/document/product/1814/132412) · [终端连接限制](https://cloud.tencent.com/document/product/1814/132411)
 - ws-scrcpy 端口惯例：Web **8000**，设备侧 WS **8886**
 - CubeSandbox 开源组件名：Cubelet / CubeShim / CubeHypervisor
