@@ -27,7 +27,7 @@ flowchart TB
 
     subgraph Redroid["Redroid / SmartRun 容器"]
       ADBD["adbd<br/>TCP 默认 :5555<br/>（USB 时无固定 TCP 口）"]
-      UIA2["UiAutomator2 Server<br/>设备侧默认 :6790<br/>经 adb forward←host 8200–8299"]
+      UIA2["UiAutomator2 Server<br/>设备侧默认 :6790"]
       ScrcpySrv["scrcpy-server.jar :8886<br/>ws-scrcpy 惯例端口"]
       FW["Android Framework<br/>system_server / zygote / SF …"]
       HAL["HAL<br/>gralloc=redroid / camera / gnss / bt-sim …"]
@@ -42,7 +42,7 @@ flowchart TB
     Kernel --> ScrcpyWeb
     ShimAgent -->|"创建/启动/监管"| Redroid
 
-    Appium -->|"ADB + forward<br/>systemPort→6790"| UIA2
+    Appium -->|"经 ADB 会话"| UIA2
     ScrcpyWeb -->|"proxy-adb → tcp:8886"| ScrcpySrv
     AdbSrv -->|"TCP :5555 或隧道"| ADBD
 
@@ -62,8 +62,7 @@ flowchart TB
 | 组件 | 默认端口 | 谁连谁 | 公开依据 |
 |---|---|---|---|
 | **Appium Server** | **4723** | 客户端 → Guest Appium | [AGS 手机操作](https://cloud.tencent.com/document/product/1814/127484) |
-| **UiAutomator2（设备侧）** | **6790**（`serverPort`） | Appium 经 ADB `forward` 连到设备此口 | [appium-uiautomator2-driver](https://github.com/appium/appium-uiautomator2-driver) |
-| **UiAutomator2（host 转发口）** | **8200–8299**（`systemPort`，取空闲） | Guest/本机 → forward → 设备 6790 | 同上 |
+| **UiAutomator2（设备侧）** | **6790**（`serverPort`） | Appium 经 ADB 会话连到设备上的 UIA2 服务 | [appium-uiautomator2-driver](https://github.com/appium/appium-uiautomator2-driver) |
 | **adb server（Guest/本机）** | **5037** | `adb` 客户端 → adb server | [Android 官方 adb](https://developer.android.com/tools/adb) |
 | **adbd（设备 TCP）** | **5555**（`adb tcpip` / `adb connect` 默认） | adb server → 设备 adbd | 同上；`adb connect` 默认 PORT=5555 |
 | **ws-scrcpy Web** | **8000** | 浏览器 → Guest | [AGS 手机操作](https://cloud.tencent.com/document/product/1814/127484) |
@@ -73,9 +72,19 @@ flowchart TB
 
 说明：
 
-- 用户调 AGS **Appium 只打 4723**；**6790 / 8200–8299 是 Appium↔设备内部链路**，一般不直接 `get_host(6790)`。
+- 用户调 AGS **Appium 只打 4723**；设备侧 UIA2 默认 **6790** 属内部链路，一般不直接 `get_host(6790)`。
 - 用户调 AGS **ADB** 时，`agr instance mobile connect` 给出本地动态口（如 `127.0.0.1:39967`），云侧再转到实例内 **adbd**；设备 TCP 模式公开默认是 **5555**，USB/隧道场景则无对外固定 TCP 口。
 - AGS 文档里 scrcpy 的 `udid=emulator-5554` 是展示名惯例，**不等于**经典 AVD；底层探测为 Redroid + Cube。
+
+### Redroid 内 adbd / UiAutomator2 / scrcpy-server：是否默认？怎么来？
+
+| 组件 | 原版 Redroid 默认？ | AGS Mobile 镜像里 | 一般如何安装/拉起 |
+|---|---|---|---|
+| **adbd** | ✅ 是（Android 系统守护进程；Redroid 常暴露 **:5555**） | ✅ 有（`agr mobile` / ADB 隧道可用） | 系统自带；`adb connect <ip>:5555` 或平台隧道，无需单独装包 |
+| **UiAutomator2 Server** | ❌ 否（非 Redroid/AOSP 自带常驻服务） | ⚠️ 会话侧由 **Appium** 管理；镜像可能预装 Appium 相关 APK（探测称有 Appium 组件） | Appium 起会话时经 ADB **install** `io.appium.uiautomator2.server`（及 test）APK，再 instrumentation 拉起听 **:6790**；也可预装后设 `skipServerInstallation` |
+| **scrcpy-server** | ❌ 否 | ✅ AGS 文档暴露 **8000/8886** 投屏通路，属产品预置能力 | 原版 scrcpy/ws-scrcpy：`adb push scrcpy-server.jar` 后 `app_process … 8886`；AGS 侧由镜像/ws-scrcpy 栈预置，用户只连 `get_host(8000)` |
+
+要点：**只有 adbd 是 Android/Redroid「标配」**；UIA2 与 scrcpy-server 都是自动化/投屏栈加装的。AGS Mobile 把后两者做成可用能力（Appium:4723、scrcpy:8000），不等于开源 redroid 镜像开箱即有。
 
 ### 模块说明与对外服务一一对应
 
@@ -106,7 +115,7 @@ flowchart TB
 |---|---|---|---|
 | **E2B Sandbox** | **envd** | — | **49983**；业务口再 `get_host` |
 | **agr CLI（生命周期）** | **shim-agent** | Redroid 由 agent 拉起 | vsock |
-| **Appium** | Appium **:4723** | UiAutomator2 **:6790**（经 ADB forward） | 对外 **4723** |
+| **Appium** | Appium **:4723** | UiAutomator2 **:6790** | 对外 **4723** |
 | **scrcpy** | ws-scrcpy **:8000** | scrcpy-server **:8886** | **8000 → 8886** |
 | **ADB** / **agr mobile** | adb server **:5037** | adbd **:5555**（TCP 默认） | 云隧道 → 本地动态口 |
 
@@ -117,7 +126,7 @@ flowchart TB
 | AGS Mobile 对外 Appium **4723**、scrcpy **8000**、代理 **8886** | ✅ 文档示例一致 | [127484 手机操作](https://cloud.tencent.com/document/product/1814/127484) |
 | envd **49983** = commands/files/health | ✅ AGS + Cube 一致 | [129691](https://cloud.tencent.com/document/product/1814/129691)；[Cube BYOI](https://cubesandbox.com/guide/tutorials/bring-your-own-image.html) |
 | CubeShim ↔ **shim-agent** **vsock** | ✅ 开源架构/changelog | [Cube overview](https://cubesandbox.com/architecture/overview.html) |
-| UiAutomator2 设备口 **6790**，host **8200–8299** | ✅ Appium 上游 | [uiautomator2-driver](https://github.com/appium/appium-uiautomator2-driver) |
+| UiAutomator2 设备口 **6790** | ✅ Appium 上游 | [uiautomator2-driver](https://github.com/appium/appium-uiautomator2-driver) |
 | adbd TCP 默认 **5555**；adb server **5037** | ✅ Android 官方 | [developer.android.com/tools/adb](https://developer.android.com/tools/adb) |
 | Mobile 主路径非 E2B commands；无终端登录 | ✅ AGS 操作边界 | [132411 终端连接](https://cloud.tencent.com/document/product/1814/132411)；tool 类型说明 |
 | Guest 上 Appium/adb/ws-scrcpy 进程落点 | ⚠️ 推断 | 由端口与常见部署推出；AGS 未公开 guest 进程表 |
