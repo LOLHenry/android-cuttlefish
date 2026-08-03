@@ -116,7 +116,7 @@ flowchart TB
 |---|---|---|
 | AGS Mobile 对外 Appium **4723**、scrcpy **8000**、代理 **8886** | ✅ 文档示例一致 | [127484 手机操作](https://cloud.tencent.com/document/product/1814/127484) |
 | envd **49983** = commands/files/health | ✅ AGS + Cube 一致 | [129691](https://cloud.tencent.com/document/product/1814/129691)；[Cube BYOI](https://cubesandbox.com/guide/tutorials/bring-your-own-image.html) |
-| CubeShim ↔ Guest agent **vsock** | ✅ 开源架构/changelog | [Cube overview](https://cubesandbox.com/architecture/overview.html) |
+| CubeShim ↔ **shim-agent** **vsock** | ✅ 开源架构/changelog | [Cube overview](https://cubesandbox.com/architecture/overview.html) |
 | UiAutomator2 设备口 **6790**，host **8200–8299** | ✅ Appium 上游 | [uiautomator2-driver](https://github.com/appium/appium-uiautomator2-driver) |
 | adbd TCP 默认 **5555**；adb server **5037** | ✅ Android 官方 | [developer.android.com/tools/adb](https://developer.android.com/tools/adb) |
 | Mobile 主路径非 E2B commands；无终端登录 | ✅ AGS 操作边界 | [132411 终端连接](https://cloud.tencent.com/document/product/1814/132411)；tool 类型说明 |
