@@ -11,7 +11,7 @@
 外围（客户端、Cloud API、Cube Host）略。只展开 **MicroVM 里跑什么**，以及各自对应哪条对外服务。
 
 > 两个常被漏画、但必须区分的组件：  
-> - **shim-agent（Guest Agent）**：Cube 平台在 Guest 内的代理，经 **vsock** 对接 Host 上的 **CubeShim**（容器生命周期、就绪、日志转发等）。  
+> - **shim-agent**：Cube 平台在 Guest 内的代理，经 **vsock** 对接 Host 上的 **CubeShim**（容器生命周期、就绪、日志转发等）。  
 > - **envd**：E2B 兼容数据面守护进程（**TCP :49983**），承载 SDK 侧鉴权 token 模型 / health；完整 `commands`/`files` 主要在 code 类沙箱。Mobile 上官方交互仍以 Appium/ADB/scrcpy 为主。
 
 ```mermaid
@@ -19,7 +19,7 @@ flowchart TB
   subgraph Guest["Guest Linux MicroVM"]
     Kernel["Guest Kernel<br/>cube.bm.guest / overlay2 /run/cube-containers"]
 
-    ShimAgent["shim-agent / Guest Agent<br/>vsock ↔ Host CubeShim<br/>拉起/监管容器、就绪、日志"]
+    ShimAgent["shim-agent<br/>vsock ↔ Host CubeShim<br/>拉起/监管容器、就绪、日志"]
     Envd["envd :49983<br/>E2B 数据面守护<br/>token / health / commands·files*"]
     AdbSrv["*adb server :5037*<br/>本机 ADB 控制口"]
     Appium["*Appium Server :4723*<br/>对外自动化入口"]
@@ -69,7 +69,7 @@ flowchart TB
 | **ws-scrcpy Web** | **8000** | 浏览器 → Guest | [AGS 手机操作](https://cloud.tencent.com/document/product/1814/127484) |
 | **scrcpy-server（设备 WS）** | **8886** | 8000 代理 → 设备 | [ws-scrcpy](https://github.com/NetrisTV/ws-scrcpy) 惯例 + AGS 示例 `remote=tcp:8886` |
 | **envd** | **49983** | E2B/Cube health、commands、files | [AGS 自定义沙箱端口](https://cloud.tencent.com/document/product/1814/129691)；[Cube envd](https://cubesandbox.com/guide/tutorials/bring-your-own-image.html) |
-| **shim-agent** | **vsock**（非业务 TCP） | Host CubeShim ↔ Guest agent | [CubeShim vsock](https://cubesandbox.com/architecture/overview.html)；changelog log-forwarding |
+| **shim-agent** | **vsock**（非业务 TCP） | Host **CubeShim** ↔ Guest **shim-agent** | [CubeShim vsock](https://cubesandbox.com/architecture/overview.html)；changelog log-forwarding |
 
 说明：
 
@@ -81,7 +81,7 @@ flowchart TB
 
 | 所在层 | 模块 | 端口 | 做什么 | 对外服务 |
 |---|---|---|---|---|
-| Guest Linux | **shim-agent / Guest Agent** | vsock | 经 vsock 听 Host **CubeShim**：容器 create/start、就绪、日志 | **agr CLI / 实例生命周期**（平台侧） |
+| Guest Linux | **shim-agent** | vsock | 对接 Host **CubeShim**：容器 create/start、就绪、日志 | **agr CLI / 实例生命周期**（平台侧） |
 | Guest Linux | **envd** | **49983** | health、token 模型；code 类 commands/files | **E2B Sandbox** |
 | Guest Linux | *Appium Server* | **4723** | 收 Appium HTTP | **Appium**（入口） |
 | Guest Linux | *adb server* | **5037** | 连设备 adbd，承接隧道 | **ADB** / **agr mobile** |
@@ -95,8 +95,8 @@ flowchart TB
 
 | | **shim-agent** | **envd** |
 |---|---|---|
-| 归属 | Cube 虚拟化/容器平台 | E2B 协议数据面 |
-| 通信 | **vsock** ↔ Host CubeShim | **TCP :49983**（经数据面网关 / token） |
+| 归属 | Cube 虚拟化/容器平台（Guest 侧） | E2B 协议数据面 |
+| 通信 | **vsock** ↔ Host **CubeShim** | **TCP :49983**（经数据面网关 / token） |
 | 主要职责 | 容器生命周期、就绪、日志 | SDK 操作沙箱（health；code 类 commands/files） |
 | 用户是否直接调 | 否（agr/Cloud 启停间接触发） | 是（E2B SDK；Mobile 上能力收窄） |
 
@@ -154,7 +154,7 @@ flowchart TB
 
   subgraph Guest["Guest Linux MicroVM"]
     direction TB
-    GA["*Guest Agent / 端口代理*"]
+    SA["shim-agent<br/>vsock ↔ Host CubeShim"]
     ADBS["*adb server*"]
     APIS["*Appium Server :4723*"]
     WSS["*ws-scrcpy Web :8000*"]
@@ -234,7 +234,8 @@ Guest 是一台完整 Linux；**Redroid 以容器形态跑在 Guest 内核上**�
 flowchart TB
   subgraph GuestLinux["Guest Linux"]
     Kernel["Guest Kernel<br/>cube.bm.guest + overlay2 /run/cube-containers"]
-    Agent["*Guest Agent*<br/>与管控/数据面协同、健康与端口暴露"]
+    ShimAgent["shim-agent<br/>vsock ↔ Host CubeShim<br/>容器生命周期 / 就绪 / 日志"]
+    Envd["envd :49983"]
     Proxy["*Ingress / 端口代理*<br/>把 4723/8000/ADB 接到内部进程"]
 
     subgraph SideCars["与 Android 并列的控制面组件（常见落在 Guest）"]
@@ -247,9 +248,10 @@ flowchart TB
       Android["Android 14 x86_64 用户态"]
     end
 
-    Kernel --> Agent
+    Kernel --> ShimAgent
+    Kernel --> Envd
     Kernel --> SideCars
-    Kernel --> RedroidBox
+    ShimAgent -->|"创建/启动/监管"| RedroidBox
     Proxy --> SideCars
     AdbServer --> Android
     AppiumSrv --> AdbServer
@@ -259,7 +261,9 @@ flowchart TB
 
 | Guest 模块 | 对应对外服务 | 说明 |
 |---|---|---|
-| *Guest Agent / 端口代理* | E2B `get_host`、Token 鉴权后的流量 | 把公网映射端口转到内部 4723/8000/ADB |
+| **shim-agent** | **agr CLI / 实例生命周期** | 对接 Host **CubeShim**（vsock） |
+| **envd :49983** | **E2B Sandbox** | health / token；Mobile 不以 commands 为主路径 |
+| *Ingress / 端口代理* | E2B `get_host`、Token 鉴权后的流量 | 把公网映射端口转到内部 4723/8000/ADB |
 | *adb server* | **ADB** / agr mobile | 维持到容器 `adbd` 的连接 |
 | *Appium :4723* | **Appium** | 对外唯一自动化 HTTP 入口 |
 | *ws-scrcpy :8000* | **scrcpy** | Web 页 + 把 WS 代理到设备 `tcp:8886` |
