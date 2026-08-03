@@ -26,9 +26,9 @@ flowchart TB
     ScrcpyWeb["*ws-scrcpy Web/代理 :8000*"]
 
     subgraph Redroid["Redroid / SmartRun 容器"]
-      ADBD["adbd<br/>TCP 默认 :5555<br/>（USB 时无固定 TCP 口）"]
-      UIA2["UiAutomator2 Server<br/>设备侧默认 :6790"]
-      ScrcpySrv["scrcpy-server.jar :8886<br/>ws-scrcpy 惯例端口"]
+      ADBD["adbd<br/>系统自带 · TCP 默认 :5555"]
+      UIA2["UiAutomator2 Server<br/>Appium 会话拉起 · :6790"]
+      ScrcpySrv["scrcpy-server.jar<br/>AGS 产品预置 · :8886"]
       FW["Android Framework<br/>system_server / zygote / SF …"]
       HAL["HAL<br/>gralloc=redroid / camera / gnss / bt-sim …"]
       Stubs["SmartRun stubs<br/>wifi / gps / radio / battery …"]
@@ -80,11 +80,11 @@ flowchart TB
 
 | 组件 | 原版 Redroid 默认？ | AGS Mobile 镜像里 | 一般如何安装/拉起 |
 |---|---|---|---|
-| **adbd** | ✅ 是（Android 系统守护进程；Redroid 常暴露 **:5555**） | ✅ 有（`agr mobile` / ADB 隧道可用） | 系统自带；`adb connect <ip>:5555` 或平台隧道，无需单独装包 |
-| **UiAutomator2 Server** | ❌ 否（非 Redroid/AOSP 自带常驻服务） | ⚠️ 会话侧由 **Appium** 管理；镜像可能预装 Appium 相关 APK（探测称有 Appium 组件） | Appium 起会话时经 ADB **install** `io.appium.uiautomator2.server`（及 test）APK，再 instrumentation 拉起听 **:6790**；也可预装后设 `skipServerInstallation` |
-| **scrcpy-server** | ❌ 否 | ✅ AGS 文档暴露 **8000/8886** 投屏通路，属产品预置能力 | 原版 scrcpy/ws-scrcpy：`adb push scrcpy-server.jar` 后 `app_process … 8886`；AGS 侧由镜像/ws-scrcpy 栈预置，用户只连 `get_host(8000)` |
+| **adbd** | ✅ **系统自带** | ✅ | 系统进程；`adb connect <ip>:5555` 或平台隧道 |
+| **UiAutomator2 Server** | ❌ | **Appium 会话拉起**（不写成「预装」；镜像或可带 APK，但上游默认会话时 install） | Appium 起会话时经 ADB install + instrumentation，听 **:6790** |
+| **scrcpy-server** | ❌ | ✅ **AGS 产品预置**（文档暴露 8000/8886） | 用户只连 `get_host(8000)`；原版路径才是自行 `adb push` + `app_process … 8886` |
 
-要点：**只有 adbd 是 Android/Redroid「标配」**；UIA2 与 scrcpy-server 都是自动化/投屏栈加装的。AGS Mobile 把后两者做成可用能力（Appium:4723、scrcpy:8000），不等于开源 redroid 镜像开箱即有。
+要点：**adbd = 系统自带**；**UiAutomator2 = Appium 会话拉起**；**scrcpy-server = AGS 产品预置**。后两者都不是开源 redroid 开箱自带。
 
 ### 模块说明与对外服务一一对应
 
@@ -95,9 +95,9 @@ flowchart TB
 | Guest Linux | *Appium Server* | **4723** | 收 Appium HTTP | **Appium**（入口） |
 | Guest Linux | *adb server* | **5037** | 连设备 adbd，承接隧道 | **ADB** / **agr mobile** |
 | Guest Linux | *ws-scrcpy* | **8000** | Web 投屏 + 代理到 8886 | **scrcpy**（入口） |
-| Redroid | **adbd** | **5555**（TCP 默认） | 设备调试桥 | **ADB**（终点） |
-| Redroid | **UiAutomator2** | **6790**（设备侧） | UI 自动化服务 | **Appium**（终点） |
-| Redroid | **scrcpy-server** | **8886** | 画面/控制 WS | **scrcpy**（终点） |
+| Redroid | **adbd** | **5555**（TCP 默认） | Android/Redroid **系统自带** | **ADB**（终点） |
+| Redroid | **UiAutomator2** | **6790** | **Appium 会话拉起** | **Appium**（终点） |
+| Redroid | **scrcpy-server** | **8886** | **AGS 产品预置** | **scrcpy**（终点） |
 | Redroid | Framework / HAL / stubs / Apps | — | 支撑上述通路 | 无独立对外 API |
 
 ### envd vs shim-agent（易混）
@@ -294,9 +294,9 @@ flowchart TB
     end
 
     subgraph ControlInGuest["对外可控的设备内模块"]
-      ADBD["adbd<br/>← ADB / agr mobile"]
-      UIA2["UiAutomator2 Server<br/>← Appium"]
-      ScrcpySrv["ws-scrcpy server.jar<br/>WebSocket :8886 ← scrcpy 经 8000 代理"]
+      ADBD["adbd<br/>系统自带 ← ADB"]
+      UIA2["UiAutomator2 Server<br/>Appium 会话拉起 ← Appium"]
+      ScrcpySrv["scrcpy-server.jar :8886<br/>AGS 产品预置 ← scrcpy 经 8000"]
     end
 
     subgraph Apps["应用层"]
@@ -316,9 +316,9 @@ flowchart TB
 
 | 容器内模块 | 端口 / 通路 | 对外服务 |
 |---|---|---|
-| **adbd** | ADB 协议（经 Guest adb + 云隧道） | **ADB**、`agr instance mobile adb` |
-| **UiAutomator2** | 由 Appium 经 ADB 拉起/会话 | **Appium** |
-| **scrcpy-server（ws 模式）** | **8886**（ws-scrcpy 惯例，非 Redroid 标准口） | **scrcpy**（经 Guest **8000** 代理） |
+| **adbd** | ADB 协议（经 Guest adb + 云隧道） | **ADB** 的设备侧终点；**系统自带** |
+| **UiAutomator2** | 由 Appium 经 ADB **会话拉起** | **Appium**；非镜像「预装」承诺 |
+| **scrcpy-server（ws 模式）** | **8886**；**AGS 产品预置** | **scrcpy**（经 Guest **8000** 代理） |
 | Framework + HAL | — | 被 ADB/Appium/投屏间接使用 |
 | SmartRun stubs | — | **无**独立公开硬件 mock API |
 | AW adapt / 预装 App | — | 仅 `android-world` Tool 类型 |
