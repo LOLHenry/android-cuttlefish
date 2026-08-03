@@ -2,11 +2,81 @@
 
 > 范围：腾讯云 Agent Runtime（AGS）**Mobile / android-world** 沙箱。  
 > 依据：公开文档 + CubeSandbox 开源组件 + 实例内 ADB/属性探测（非腾讯官方内部蓝图全文）。  
-> 图中标注：**实线框 = 有较强证据**；*斜体 = 按常见部署推断的落点*。
+> 图中标注：**加粗/实线 = 有较强证据**；*斜体 = 按端口与常见部署推断的落点*。
 
 ---
 
-## 1. 总览：从客户端到 MicroVM
+## 0. 聚焦：Guest Linux MicroVM + Redroid（模块 ↔ 对外服务）
+
+外围（客户端、Cloud API、Cube Host）略。只展开 **MicroVM 里跑什么**，以及各自对应哪条对外服务。
+
+```mermaid
+flowchart TB
+  subgraph Guest["Guest Linux MicroVM"]
+    Kernel["Guest Kernel<br/>cube.bm.guest / overlay2 /run/cube-containers"]
+    Agent["*Guest Agent + 端口暴露*<br/>把实例端口挂到数据面"]
+    AdbSrv["*adb server*"]
+    Appium["*Appium Server :4723*"]
+    ScrcpyWeb["*ws-scrcpy Web/代理 :8000*"]
+
+    subgraph Redroid["Redroid / SmartRun 容器"]
+      ADBD["adbd"]
+      UIA2["UiAutomator2 Server"]
+      ScrcpySrv["scrcpy-server.jar :8886<br/>ws-scrcpy 惯例端口"]
+      FW["Android Framework<br/>system_server / zygote / SF …"]
+      HAL["HAL<br/>gralloc=redroid / camera / gnss / bt-sim …"]
+      Stubs["SmartRun stubs<br/>wifi / gps / radio / battery …"]
+      Apps["预装 App<br/>+ AW adapt（仅 android-world）"]
+    end
+
+    Kernel --> Agent
+    Kernel --> AdbSrv
+    Kernel --> Appium
+    Kernel --> ScrcpyWeb
+    Kernel --> Redroid
+
+    Appium -->|"ADB 会话"| UIA2
+    ScrcpyWeb -->|"proxy-adb → tcp:8886"| ScrcpySrv
+    AdbSrv --> ADBD
+
+    ADBD --> FW
+    UIA2 --> FW
+    ScrcpySrv --> FW
+    FW --> HAL
+    FW --> Stubs
+    Apps --> FW
+  end
+```
+
+### 模块说明与对外服务一一对应
+
+| 所在层 | 模块 | 做什么 | 对外服务（一一对应） |
+|---|---|---|---|
+| Guest Linux | *Guest Agent + 端口暴露* | 维持实例侧网络/端口，供 `get_host(port)` 映射 | **E2B Sandbox**（Mobile 上主要是 host/token 通路，不是 `commands.run`） |
+| Guest Linux | *Appium Server :4723* | 收 Appium HTTP，驱动设备自动化 | **Appium** |
+| Guest Linux | *ws-scrcpy :8000* | Web 投屏页；把 WS 代理到设备 `tcp:8886` | **scrcpy**（入口） |
+| Guest Linux | *adb server* | 连接容器内 `adbd`，承接云侧 ADB 隧道 | **ADB** / **agr CLI** `mobile connect\|adb` |
+| Redroid | **adbd** | Android 调试桥守护进程 | **ADB** 的设备侧终点 |
+| Redroid | **UiAutomator2 Server** | UI 树、点击、滑动、`mobile: shell` 等 | **Appium** 的设备侧终点 |
+| Redroid | **scrcpy-server :8886** | WebSocket 画面/控制流（ws-scrcpy 默认口） | **scrcpy** 的设备侧终点 |
+| Redroid | Android Framework | 系统服务与窗口/输入管线 | 被 ADB / Appium / scrcpy **间接**使用（无独立对外 API） |
+| Redroid | HAL（redroid gralloc 等） | 图形/相机/定位/蓝牙等硬件抽象 | 同上，**无**独立公开 mock API |
+| Redroid | SmartRun stubs | wifi/gps/radio/battery 等内部桩 | **不对外**提供产品级硬件 mock 服务 |
+| Redroid | 预装 App / AW adapt | 业务/评测应用与属性 | 应用内容，不是控制面接口 |
+
+### 对外服务 ← 模块（反查）
+
+| 对外服务 | Guest Linux 模块 | Redroid 模块 | 端口 |
+|---|---|---|---|
+| **E2B Sandbox** | *端口暴露 / get_host 落点* | — | 443 映射到实例端口 |
+| **Appium** | *Appium :4723* | UiAutomator2 | **4723** |
+| **scrcpy** | *ws-scrcpy :8000* | scrcpy-server | **8000 → 8886** |
+| **ADB** | *adb server* | adbd | 隧道 → adbd |
+| **agr CLI（mobile）** | *adb server*（经隧道） | adbd | 同 ADB |
+
+---
+
+## 1. 总览：从客户端到 MicroVM（含外围，可选）
 
 ```mermaid
 flowchart TB
