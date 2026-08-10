@@ -1,0 +1,4 @@
+08-10 15:33:08.642 10008 10008 I snapshot_util_cvd: main.cc:58 Instance #1: Sending request: suspend { }
+08-10 15:33:13.348 10008 10008 I snapshot_util_cvd: snapshot_utils.cc:181 Copy from "/home/fangyu/cf-aosp16/cuttlefish" to "/home/fangyu/cf-snapshots/aosp16-ready"
+08-10 15:33:34.285 10008 10008 I snapshot_util_cvd: main.cc:58 Instance #1: Sending request: snapshot_take { snapshot_path: "/home/fangyu/cf-snapshots/aosp16-ready/snapshot_meta_info.json" }
+08-10 15:35:07.306 10008 10008 I snapshot_util_cvd: main.cc:58 Instance #1: Sending request: resume { }

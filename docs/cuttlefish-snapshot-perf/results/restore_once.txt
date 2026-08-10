@@ -1,0 +1,4 @@
+launch_rc=0
+restore_wall_s 228.553
+restore_boot_completed_after_s=1
+16

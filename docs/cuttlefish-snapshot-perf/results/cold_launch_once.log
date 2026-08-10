@@ -1,0 +1,32 @@
+08-10 15:04:10.021  4721  4721 I launch_cvd: main.cc:179 Using system_image_dir of: 
+Reading --config option from: /home/fangyu/cf-aosp16/android-info.txt
+Launching CVD using --config='phone'.
+libEGL warning: DRI3 error: Could not get DRI3 device
+libEGL warning: Ensure your X server supports DRI3 to get accelerated rendering
+libEGL warning: DRI3 error: Could not get DRI3 device
+libEGL warning: Ensure your X server supports DRI3 to get accelerated rendering
+GPU vhost user auto mode: not needed for --gpu_mode=guest_swiftshader. Not enabling vhost user gpu.
+Requested resuming a previous session (the default behavior) but the base images have changed under the overlay, making the overlay incompatible. Wiping the overlay files.
+Path for instance UDS: /tmp/cf_avd_1000
+IsDirectoryEmpty test failed with /tmp/vsock_3_1000 as it exists but not empty
+
+The following lines contain useful debugging information:
+  Point your browser to https://localhost:8443 to interact with the device.
+  Serial console is disabled; use -console=true to enable it.
+  Logcat output: /home/fangyu/cf-aosp16/cuttlefish/instances/cvd-1/logs/logcat
+  Kernel log: /home/fangyu/cf-aosp16/cuttlefish/instances/cvd-1/kernel.log
+  Launcher log: /home/fangyu/cf-aosp16/cuttlefish/instances/cvd-1/logs/launcher.log
+  Instance configuration: /home/fangyu/cf-aosp16/cuttlefish/instances/cvd-1/cuttlefish_config.json
+  Launcher Build ID: 15581820
+Virtual device booted successfully
+VIRTUAL_DEVICE_BOOT_COMPLETED
+===================================================================
+NOTICE:
+
+By using this Android Virtual Device, you agree to
+Google Terms of Service (https://policies.google.com/terms).
+The Google Privacy Policy (https://policies.google.com/privacy)
+describes how Google handles information generated as you use
+Google Services.
+===================================================================
+
