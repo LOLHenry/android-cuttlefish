@@ -1,0 +1,22 @@
+=== host ===
+Linux jean 6.6.87.2-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Thu Jun  5 18:30:46 UTC 2025 x86_64 x86_64 x86_64 GNU/Linux
+[PASS] Running under WSL
+=== /dev/kvm ===
+crw-rw---- 1 root kvm 10, 232 Aug 10 14:18 /dev/kvm
+[PASS] /dev/kvm readable+writable
+=== CPU virt flags ===
+[PASS] Intel VT-x (vmx) visible
+[INFO] hypervisor flag set (nested guest)
+=== nested module param ===
+[INFO] nested=Y
+[PASS] nested enabled
+=== vsock ===
+[PASS] /dev/vhost-vsock present
+[INFO] /dev/vsock present
+=== KVM_CREATE_VCPU (critical) ===
+KVM_CREATE_VCPU OK
+[PASS] KVM_CREATE_VCPU succeeded
+[PASS] no new arch/x86/kvm BUG in dmesg
+
+=== summary: PASS=7 FAIL=0 ===
+RESULT: KVM gate OK — proceed to 00_prepare_env.sh / launch_cvd
