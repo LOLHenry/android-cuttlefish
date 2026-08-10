@@ -1,0 +1,30 @@
+# Cold / restore latency breakdown notes (WSL2 local)
+
+Source: launcher.log + kernel.log + logcat from the create-snapshot cold boot
+and the last benchmark restore round on 2026-08-10.
+
+## Cold boot (host wall ~202s for this sample; 3-run mean 230.5s)
+
+| Phase | Seconds | Markers |
+|---|---|---|
+| assemble_cvd / wipe overlay | ~7 | 15:29:40 -> 15:29:47 Starting monitored subprocesses |
+| host services + crosvm up | ~1 | 15:29:47 -> 15:29:48 guest U-Boot / Loaded bzImage |
+| guest to sys.boot_completed | ~151 | kernel.log [150.77] sys.boot_completed=1 |
+| guest to VIRTUAL_DEVICE_BOOT_COMPLETED | ~186 | kernel.log [185.87] |
+| host launch_cvd return | ~202 | host 15:33:02 VIRTUAL_DEVICE_BOOT_COMPLETED |
+
+Guest boot_progress (uptime ms): start 49232, preload_end 63956, system_run 65690,
+pms_ready 92656, ams_ready 123926, enable_screen 135125.
+
+## Snapshot restore (sample aligned with ~214s wall)
+
+| Phase | Seconds | Markers |
+|---|---|---|
+| host tree copy + assemble (estimated) | ~20-30 | launch_cvd "Copy from" before run_cvd 15:42:51 |
+| OpenWRT mem restore | ~11 | completed restore in 10887ms; mem 256MiB |
+| Android mem restore | ~106 | completed restore in 105849ms; mem ~4GiB |
+| resume + host ready | ~90 | resume 15:44:31 -> restored successfully 15:46:01 |
+
+## Snapshot take wall (~119s)
+
+suspend ~5s; host copy ~21s; crosvm snapshot take ~93s (15:33:34 -> 15:35:07).
