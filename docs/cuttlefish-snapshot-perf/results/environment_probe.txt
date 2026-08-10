@@ -1,0 +1,51 @@
+=== uname ===
+Linux cursor 6.12.94+ #1 SMP PREEMPT_DYNAMIC Wed Aug  5 16:23:05 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+=== os-release ===
+PRETTY_NAME="Ubuntu 24.04.4 LTS"
+NAME="Ubuntu"
+VERSION_ID="24.04"
+VERSION="24.04.4 LTS (Noble Numbat)"
+VERSION_CODENAME=noble
+=== cpu/mem ===
+4
+               total        used        free      shared  buff/cache   available
+Mem:            15Gi       1.1Gi       2.1Gi       9.3Mi        12Gi        14Gi
+Swap:             0B          0B          0B
+=== devices ===
+crw-rw-rw- 1 root kvm  10, 232 Aug 10 04:10 /dev/kvm
+crw-rw-rw- 1 root root 10, 258 Aug  6 14:05 /dev/vsock
+ls: cannot access '/dev/vhost-vsock': No such file or directory
+=== nested ===
+Y
+=== packages ===
+ii  cuttlefish-base 1.55.1       amd64        Cuttlefish Android Virtual Device companion package
+ii  cuttlefish-user 1.55.1       amd64        Cuttlefish Android Virtual Device companion package
+=== image ===
+-rw-r--r-- 1 ubuntu kvm 67108864 Aug 10 03:47 /home/ubuntu/cf-aosp16/boot.img
+-rw-r--r-- 1 ubuntu kvm     3422 Aug 10 03:47 /home/ubuntu/cf-aosp16/fetcher_config.json
+os version: 16.0.0
+os patch level: 2025-12
+=== kvm bug count ===
+7
+=== sample kvm bug ===
+[ 1487.938273] CPU: 1 UID: 1000 PID: 14931 Comm: crosvm_vcpu0 Tainted: G      D            6.12.94+ #1
+--
+[ 1488.013637] kernel BUG at arch/x86/kvm/x86.c:702!
+[ 1488.014125] ------------[ cut here ]------------
+[ 1488.014368] Oops: invalid opcode: 0000 [#3] PREEMPT SMP NOPTI
+[ 1488.014608] kernel BUG at arch/x86/kvm/x86.c:702!
+[ 1488.014926] CPU: 2 UID: 1000 PID: 15064 Comm: crosvm_vcpu0 Tainted: G      D            6.12.94+ #1
+[ 1488.015679] Tainted: [D]=DIE
+--
+[ 2170.788691] kernel BUG at arch/x86/kvm/x86.c:702!
+[ 2170.788938] Oops: invalid opcode: 0000 [#5] PREEMPT SMP NOPTI
+[ 2170.789265] CPU: 2 UID: 1000 PID: 16579 Comm: python3 Tainted: G      D            6.12.94+ #1
+--
+[ 2177.232464] kernel BUG at arch/x86/kvm/x86.c:702!
+[ 2177.232727] Oops: invalid opcode: 0000 [#6] PREEMPT SMP NOPTI
+[ 2177.233070] CPU: 0 UID: 1000 PID: 16624 Comm: qemu-system-x86 Tainted: G      D            6.12.94+ #1
+--
+[ 2187.212779] kernel BUG at arch/x86/kvm/x86.c:702!
+[ 2187.213035] Oops: invalid opcode: 0000 [#7] PREEMPT SMP NOPTI
+[ 2187.213353] CPU: 2 UID: 1000 PID: 16631 Comm: qemu-system-x86 Tainted: G      D            6.12.94+ #1
+=== launch failure sample ===

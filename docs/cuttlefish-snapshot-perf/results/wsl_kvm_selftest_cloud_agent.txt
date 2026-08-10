@@ -1,0 +1,51 @@
+=== host ===
+Linux cursor 6.12.94+ #1 SMP PREEMPT_DYNAMIC Wed Aug  5 16:23:05 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+[INFO] Not WSL (bare metal / cloud / other VM) — still valid for this gate check
+=== /dev/kvm ===
+crw-rw-rw- 1 root kvm 10, 232 Aug 10 06:11 /dev/kvm
+[PASS] /dev/kvm readable+writable
+=== CPU virt flags ===
+[PASS] Intel VT-x (vmx) visible
+[INFO] hypervisor flag set (nested guest)
+=== nested module param ===
+[INFO] nested=Y
+[PASS] nested enabled
+=== vsock ===
+[INFO] /dev/vhost-vsock missing — use launch flag --vhost_user_vsock=true after KVM works
+[INFO] could not load vhost_vsock (module absent is OK if using vhost_user_vsock)
+[INFO] /dev/vsock present
+=== KVM_CREATE_VCPU (critical) ===
+/workspace/docs/cuttlefish-snapshot-perf/scripts/03_wsl_kvm_selftest.sh: line 82: 15844 Segmentation fault      python3 - <<'PY'
+import fcntl, os, sys
+KVM_CREATE_VM = 0xAE01
+KVM_CREATE_VCPU = 0xAE41
+try:
+    kvm = os.open("/dev/kvm", os.O_RDWR)
+    vm = fcntl.ioctl(kvm, KVM_CREATE_VM, 0)
+    vcpu = fcntl.ioctl(vm, KVM_CREATE_VCPU, 0)
+    os.close(vcpu)
+    os.close(vm)
+    os.close(kvm)
+    print("KVM_CREATE_VCPU OK")
+except Exception as e:
+    print("KVM_CREATE_VCPU FAIL:", e)
+    sys.exit(1)
+PY
+
+[FAIL] KVM_CREATE_VCPU failed or process crashed (segfault) — nested KVM broken
+[FAIL] dmesg grew kvm BUG count (10 -> 11); sample:
+[ 9485.105694] RIP: 0010:kvm_spurious_fault+0xe/0x10
+[ 9485.118508] RIP: 0010:kvm_spurious_fault+0xe/0x10
+[ 9505.398030] kernel BUG at arch/x86/kvm/x86.c:702!
+[ 9505.399223] RIP: 0010:kvm_spurious_fault+0xe/0x10
+[ 9505.411910] RIP: 0010:kvm_spurious_fault+0xe/0x10
+
+=== summary: PASS=3 FAIL=2 ===
+RESULT: NOT READY for Cuttlefish.
+
+On Windows WSL2:
+  1) Run scripts/wsl2_enable_nested.ps1 as Administrator
+  2) Confirm BIOS VT-x/AMD-V on; wsl --update; nestedVirtualization=true
+  3) Re-run this script
+  4) If still FAIL: use bare-metal Ubuntu or Hyper-V Linux VM with working nested KVM
+     (Cuttlefish launch flags cannot bypass KVM_CREATE_VCPU kernel BUG)
