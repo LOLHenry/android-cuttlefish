@@ -256,6 +256,16 @@ $SNAPSHOT_PATH/
 
 然后将 `results/*.csv` 与 `summary.json` 回填本报告第 4/7 节。
 
+### 9.1 Windows 本机（WSL2）
+
+Cloud Agent **不能**登录你的 Windows；请在本机按 `WINDOWS_WSL2.md` 操作：
+
+1. 管理员运行 `scripts/wsl2_enable_nested.ps1`
+2. WSL 内运行 `scripts/03_wsl_kvm_selftest.sh`（必须 `KVM_CREATE_VCPU OK`）
+3. 再跑 `00_prepare_env.sh` / 基准脚本
+
+本 Cloud Agent 上同款自检结果见 `results/wsl_kvm_selftest_cloud_agent.txt`：**FAIL**（`KVM_CREATE_VCPU` segfault + `kvm_spurious_fault`）。L1 调参无法修复。
+
 ---
 
 **报告生成信息**
@@ -263,3 +273,4 @@ $SNAPSHOT_PATH/
 - 分支：`cursor/cuttlefish-snapshot-perf-test-0f24`
 - 脚本：`docs/cuttlefish-snapshot-perf/scripts/`
 - 环境证据：`docs/cuttlefish-snapshot-perf/results/environment_probe.txt`
+- Windows 指南：`docs/cuttlefish-snapshot-perf/WINDOWS_WSL2.md`
