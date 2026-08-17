@@ -4,7 +4,8 @@
 > 地域：`ap-shanghai`（数据面域名 `ap-shanghai.tencentags.com`）  
 > 目的：核实 Mobile / android-world 沙箱底层实现，以及是否官方提供 WiFi / Camera / GNSS / BT 等硬件 mock 能力。  
 > 硬件/mock 专项命令复测：2026-07-23 10:22 UTC，Instance `ocfkyyvhr4sv23ydpzefw4yl4vr5atl7j2rmrfiq`（Tool `android-world-probe` / `sdt-pd9yjy00`），原始输出 `/tmp/ags-probe/hw_cmd_matrix/`。  
-> android_world_adapt v23 逆向抽取：2026-07-25，分析见 §3.2.1，抽取物见 `artifacts/android-world-adapt-v23/`。
+> android_world_adapt v23 逆向抽取：2026-07-25，分析见 §3.2.1，抽取物见 `artifacts/android-world-adapt-v23/`。  
+> WiFi 模拟与 Cuttlefish/wmediumd/hostapd 对比：[`redroid-wifi-simulation.md`](./redroid-wifi-simulation.md)。
 
 **实测标注图例**
 
@@ -486,7 +487,7 @@ on property:persist.vendor.smartrun.telephony.enabled=0
 
 | 能力 | 官方 API | 镜像现象 | 实测标注 |
 |---|---|---|---|
-| WiFi / AP / 信号强度 | 无 | `smartrun.wifi.enabled=0`；`hwsim0` DOWN；`wlan0` 设备不存在 | ❌ 启用失败（STA_START_FAILURE）；扫描/SoftAP 无效；无 RSSI/AP 注入 |
+| WiFi / AP / 信号强度 | 无 | `smartrun.wifi.enabled=0`；`hwsim0` DOWN；`wlan0` 设备不存在 | ❌ 启用失败（STA_START_FAILURE）；扫描/SoftAP 无效；无 RSSI/AP 注入。方案对比见 [`redroid-wifi-simulation.md`](./redroid-wifi-simulation.md) |
 | Camera | 无 | 1× Front/External + `/dev/video42` | ✅ dumpsys 可读；❌ 无注入命令 |
 | GNSS | 无 | GNSS HAL + `/data/vendor/gps/gnss` | ⚠️ 文件可写；❌ `last location` 仍 null；❌ test provider 被 MOCK_LOCATION 拒绝 |
 | BT | 无 | `bluetooth@1.1-service.sim` | ⚠️ `svc bluetooth enable` 回报 Success 但状态仍 OFF |
