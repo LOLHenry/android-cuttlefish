@@ -1,7 +1,7 @@
 # 基于 Cuttlefish 的鲲鹏 Android 沙箱 — 技术导入与计划
 
 > **文档性质**：部门内部技术导入帖草稿  
-> **状态**：v0.7
+> **状态**：v0.8
 
 ---
 
@@ -82,13 +82,19 @@ Agent 通过 Appium / ADB 在虚拟手机上执行任务
 - 在目标算力平台（鲲鹏 ARM）上**原生运行**，无跨架构损耗
 - 具备**启动加速**手段（snapshot、预热池等），支撑高频创建销毁
 
-### 1.5 业界参考：E2B Sandbox
+### 1.5 行业调研
 
-近期我们调研了开源 [E2B Sandbox](https://e2b.dev/) 方案。E2B 面向 AI Agent 提供隔离代码执行环境，其核心技术点可以概括为：
+近期我们从两个方向调研了业界 Android / Agent 沙箱实践，分别关注**交付速度**和**Android 运行形态**两条路线。
+
+---
+
+#### 1.5.1 E2B Sandbox：沙箱即恢复的快照
+
+[E2B Sandbox](https://e2b.dev/) 是面向 AI Agent 的开源隔离执行环境，底层基于 Firecracker MicroVM。其核心技术点可以概括为：
 
 > **沙箱即恢复的快照。**
 
-E2B 并不是每次请求都从零启动一台完整环境，而是：
+E2B 并不是每次请求都从零冷启动一台完整环境，而是：
 
 1. **预先构建模板镜像**，将环境启动到就绪状态后打快照（snapshot）
 2. **创建沙箱时从快照恢复**，而非冷启动——相当于「暂停的 VM 直接 resume」
@@ -101,7 +107,63 @@ E2B 并不是每次请求都从零启动一台完整环境，而是：
                               （秒级）              （干净环境）
 ```
 
-这对 Android 沙箱的启发是：**「快」的关键不在于把冷启动做得多快，而在于能不能用快照把「已就绪的 Android 环境」直接恢复出来。** Cuttlefish 同样具备 snapshot 能力，这是我们后续启动优化的重要方向。
+**对 Android 沙箱的启示**：
+
+| 启示 | 说明 |
+|------|------|
+| **快 ≠ 冷启动快** | 关键在于能否从快照恢复「已就绪的 Android 环境」，而非每次走完整 boot 流程 |
+| **模板 + 快照是核心资产** | 应预先构建「Android 已启动、ADB 可用」的基准快照，作为交付单元 |
+| **销毁后恢复 = 环境重置** | episode 间回到干净状态，不必依赖复杂的状态清理逻辑 |
+| **与 Cuttlefish 的关联** | Cuttlefish 具备 snapshot 能力，这是我们启动优化的核心方向 |
+
+---
+
+#### 1.5.2 腾讯 AGR：VM + Redroid 的 Android 沙箱
+
+腾讯云 [Agent Runtime（AGR）](https://cloud.tencent.com/document/product/1814) 提供 Mobile / `android-world` 两类 Android 沙箱，底层架构为 **MicroVM + Redroid 容器**：
+
+```
+Host（Cube 平台）
+    ↓
+Guest Linux MicroVM
+    ├── shim-agent（容器生命周期管理，vsock 对接 Host）
+    ├── Appium Server :4723（自动化入口）
+    ├── adb server :5037
+    └── Redroid 容器（Android 运行在容器内）
+            ├── adbd :5555
+            ├── UiAutomator2 :6790
+            ├── Android Framework + HAL
+            └── 预装 App + 场景适配层（android-world）
+```
+
+与 Cuttlefish「完整虚拟设备」不同，AGR 的路线是：**VM 提供隔离，Redroid 容器提供 Android 运行时**——更轻量，但 HAL/硬件行为与真机/完整虚拟设备的差异更大。
+
+对外以 **Appium + ADB + scrcpy** 三条标准通道交付；`android-world` 类型在基础 Mobile 镜像上叠加适配层（预装任务 App、Telephony bootstrap 等初始化脚本），支撑 AndroidWorld 评测与训练。
+
+**对 Android 沙箱的启示**：
+
+| 启示 | 说明 |
+|------|------|
+| **场景化镜像是关键** | 基础 Android 镜像 + 场景 overlay（如 AndroidWorld 适配层），而非一套镜像打天下 |
+| **自动化接口要标准化** | Appium / ADB 是业界事实标准，沙箱应对齐而非自造协议 |
+| **硬件能力靠镜像适配** | GPS/短信等能力通过镜像内 stub 脚本和系统服务 bootstrap 实现，而非运行时动态 mock API |
+| **VM 隔离 + 轻量 Android 是可行路线** | 牺牲部分真实性换取密度和启动速度；但完整虚拟设备（Cuttlefish）在兼容性上更有优势 |
+| **episode 重置靠重建/回滚** | 训练场景的环境干净性，通过容器重建或镜像层初始化脚本保障 |
+
+---
+
+#### 1.5.3 两条路线的对照
+
+| 维度 | E2B（通用 Agent 沙箱） | 腾讯 AGR（Android 沙箱） | 我们的方向（Cuttlefish） |
+|------|------------------------|--------------------------|------------------------|
+| 核心思路 | 快照恢复，秒级交付 | VM + 容器，场景化镜像 | 完整虚拟设备 + 快照加速 |
+| Android 形态 | 不涉及 | Redroid 容器 | AOSP Cuttlefish |
+| 真实性 | — | 中（容器 Android） | 较高（完整设备栈） |
+| 交付速度 | 极快（snapshot） | 较快（容器启动） | 待优化（snapshot 是关键） |
+| 场景定制 | 模板镜像 | 基础镜像 + overlay | 精简镜像 + overlay |
+| 自动化接口 | SDK / API | Appium + ADB | ADB（对齐业界标准） |
+
+**综合判断**：E2B 告诉我们「快」靠快照；AGR 告诉我们 Android 沙箱「怎么用」靠场景化镜像和标准自动化接口。Cuttlefish 在真实性上优于 Redroid 路线，但需要补齐快照加速和镜像/进程裁剪，才能在交付速度上追上业界水位。
 
 ### 1.6 我们的选型方向
 
@@ -312,4 +374,4 @@ UI 自动化依赖 display/input 链路，部分 App 强依赖 GPU。计划摸�
 
 ---
 
-*文档版本：v0.7 | 最后更新：2026-08*
+*文档版本：v0.8 | 最后更新：2026-08*
